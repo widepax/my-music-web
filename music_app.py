@@ -41,7 +41,7 @@ ORDER_INV_MAP = {v: k for k, v in ORDER_LABEL_MAP.items()}  # {"viewCount":"조�
 # 페이지/테마/CSS
 # ------------------------------------------------
 st.set_page_config(
-    page_title="INhee Hi‑Fi Music Search",
+    page_title="INhee Hi‑Fi Music Room",
     layout="wide",
     initial_sidebar_state="expanded"
 )
