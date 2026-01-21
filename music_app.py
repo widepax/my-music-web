@@ -1,6 +1,6 @@
 
 # =============================
-# INhee Hi‑Fi Music Search (Final Unified + inv_map fix)
+# INhee Hi‑Fi Music Search (Final Unified + inv_map fix + grid/height fix)
 # =============================
 
 # --- 최상단: import & cache 데코레이터 폴리필 ---
@@ -24,9 +24,9 @@ from typing import List, Dict, Tuple, Optional
 from platform import python_version
 import os
 
-# --- 전역 상수 / 매핑 (하단에서도 안전하게 사용) ---
+# --- 전역 상수 / 매핑 ---
 SHOW_DIAGNOSTIC_BADGES = False
-VERSION = "2026-01-21-16:20 KST (final-unified+inv_map-fix)"
+VERSION = "2026-01-21-16:20 KST (final-unified+inv_map-fix+grid-height-fix)"
 
 # 정렬 옵션 매핑(사이드바용 / 역매핑)
 ORDER_LABEL_MAP = {
@@ -46,6 +46,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# (중요) 실제 태그(<style>) 사용: 엔티티(&lt; &gt;) 금지
 CUSTOM_CSS = """
 <style>
 .stApp {
@@ -112,35 +113,45 @@ h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
   object-fit:cover;
   border-radius:10px;
 }
+
+/* 텍스트 마진 제거 + 고정 라인 클램프 */
 .card .textwrap {
   display:flex;
   flex-direction:column;
   margin-top:8px;
-  min-height: 78px; /* 제목+메타 영역 고정 (44 + 20 + 마진) */
+  /* 제목(2줄) + 간격 + 메타(1줄) */
+  min-height: calc(1.2em * 2 + 6px + 1.2em);
+  max-height: calc(1.2em * 2 + 6px + 1.2em);
 }
+.card .title,
+.card .meta { margin: 0; }
+
 .card .title {
   font-weight:700;
   color:#eaf7ff;
+  line-height: 1.2em;
   display:-webkit-box;
-  -webkit-line-clamp:2;
+  -webkit-line-clamp:2;  /* 2줄 고정 */
   -webkit-box-orient:vertical;
   overflow:hidden;
   text-overflow:ellipsis;
-  min-height: 44px;
-  line-height: 1.2em;
+  min-height: calc(1.2em * 2);
+  max-height: calc(1.2em * 2);
 }
 .card .meta {
   font-size:.88rem;
   color:#9dd5ff;
-  margin-top:4px;
+  line-height: 1.2em;
+  margin-top:6px;
   display:-webkit-box;
-  -webkit-line-clamp:1;
+  -webkit-line-clamp:1;  /* 1줄 고정 */
   -webkit-box-orient:vertical;
   overflow:hidden;
   text-overflow:ellipsis;
-  min-height: 20px;
+  min-height: 1.2em;
+  max-height: 1.2em;
 }
-.card .btnwrap { margin-top:auto; }
+
 .section { padding:14px 16px; }
 .badge {
   display:inline-block;
@@ -231,7 +242,7 @@ def yt_api_search(query: str, order: str = "viewCount", max_results: int = 50, p
     return results, next_token
 
 # ------------------------------------------------
-# 스크래핑(대체): 정규식 제거, ytInitialData 중괄호 밸런싱 파싱
+# 스크래핑(대체): ytInitialData 중괄호 밸런싱 파싱
 # ------------------------------------------------
 COMMON_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
@@ -343,13 +354,16 @@ ss.setdefault("current_order", "viewCount")  # 기본값: 조회수 많은 순
 # ------------------------------------------------
 if SHOW_DIAGNOSTIC_BADGES:
     st.sidebar.write(f"🔖 App Version: `{VERSION}`")
-    st.sidebar.write(f"📄 Running file: `{__file__}`")
+    try:
+        st.sidebar.write(f"📄 Running file: `{__file__}`")
+    except Exception:
+        pass
     sha = os.environ.get("STREAMLIT_COMMIT_HASH") or os.environ.get("GITHUB_SHA")
     if sha:
         st.sidebar.write(f"🔗 Commit: `{sha[:8]}`")
 
 # ------------------------------------------------
-# 사이드바: 상태/유틸/검색 (한 번만 렌더)
+# 사이드바: 상태/유틸/검색
 # ------------------------------------------------
 with st.sidebar:
     st.header("🔎 검색 설정")
@@ -403,7 +417,7 @@ with st.sidebar:
     do_search = st.button("✅ OK (검색 실행)", key="sb_search")
 
 # ------------------------------------------------
-# 상단 타이틀 & 플레이어
+# 상단 타이틀 & 플레이어 (실제 태그 사용)
 # ------------------------------------------------
 st.title("🎵 INhee Hi‑Fi Music Search")
 
@@ -443,9 +457,16 @@ def run_search(query: str, batch_size: int):
                 ss.results = dedupe_by_video_id(ss.results)
                 ss.next_token = nextt
             except requests.HTTPError as e:
-                try:
-                    msg = e.response.json()
-                except Exception:
+                msg = {}
+                if getattr(e, "response", None):
+                    try:
+                        msg = e.response.json()
+                    except Exception:
+                        try:
+                            msg = {"status_code": e.response.status_code, "text": e.response.text[:300]}
+                        except Exception:
+                            msg = {"error": str(e)}
+                else:
                     msg = {"error": str(e)}
                 st.error(f"API 호출 실패: {msg}")
 
@@ -468,24 +489,42 @@ elif ss.results:
     ss.results = dedupe_by_video_id(ss.results)
     st.caption(f"🔎 ‘{ss.last_query}’ — {len(ss.results)}개 로드됨 · 정렬: {ORDER_INV_MAP.get(ss.current_order, ss.current_order)}")
 
-    cols = st.columns(grid_cols)
-    for i, item in enumerate(ss.results):
-        with cols[i % grid_cols]:
-            st.markdown('<div class="card">', unsafe_allow_html=True)
-            st.image(item["thumbnail"], use_container_width=True)
-            st.markdown('<div class="textwrap">', unsafe_allow_html=True)
-            st.markdown(f'<div class="title">{item["title"]}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="meta">{item["channel"]} · {item["duration"]}</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('<div class="btnwrap">', unsafe_allow_html=True)
-            if st.button("▶ 재생", key=f"play_{item['video_id']}_{i}", use_container_width=True):
-                ss.selected_video_id = item["video_id"]
-                st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+    # ✅ 행(ROW) 단위 청크 렌더링: 빈 줄/비어 보이는 칸 방지
+    n = len(ss.results)
+    for row_start in range(0, n, grid_cols):
+        row_items = ss.results[row_start:row_start + grid_cols]
+        cols = st.columns(len(row_items))  # 마지막 줄이 덜 차도 정상
 
+        for col_idx, item in enumerate(row_items):
+            with cols[col_idx]:
+                st.markdown('<div class="card">', unsafe_allow_html=True)
+
+                # 썸네일 URL 보정 (누락/None 대비)
+                thumb = item.get("thumbnail") or f"https://i.ytimg.com/vi/{item['video_id']}/mqdefault.jpg"
+                st.image(thumb, use_container_width=True)
+
+                # 텍스트 고정 높이(2줄 제목 + 1줄 메타)
+                st.markdown('<div class="textwrap">', unsafe_allow_html=True)
+                st.markdown(f'<div class="title">{item.get("title","")}</div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="meta">{item.get("channel","")} · {item.get("duration","")}</div>',
+                    unsafe_allow_html=True
+                )
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                # 버튼 영역 (유일 키: video_id + row/col 인덱스)
+                st.markdown('<div class="btnwrap">', unsafe_allow_html=True)
+                if st.button("▶ 재생", key=f"play_{item['video_id']}_{row_start}_{col_idx}", use_container_width=True):
+                    ss.selected_video_id = item["video_id"]
+                    st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                st.markdown('</div>', unsafe_allow_html=True)
+
+    # 더 보기 버튼 (키 충돌 방지)
     if ss.next_token and not ss.use_scraping:
-        if st.button("＋ 더 보기", key=f"more_{len(ss.results)}_{ss.next_token or 'end'}", use_container_width=True):
+        more_key = f"more_{len(ss.results)}_{ss.next_token}_{grid_cols}"
+        if st.button("＋ 더 보기", key=more_key, use_container_width=True):
             with st.spinner("추가 로딩 중…"):
                 new, new_token = yt_api_search(
                     ss.last_query,
@@ -504,7 +543,7 @@ else:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ------------------------------------------------
-# 본문 하단 개발자 도구 / 진단 (사이드바와 중복되지 않음)
+# 본문 하단 개발자 도구 / 진단
 # ------------------------------------------------
 with st.expander("🛠️ 개발자 도구 / 진단"):
     c1, c2 = st.columns(2)
@@ -518,6 +557,7 @@ with st.expander("🛠️ 개발자 도구 / 진단"):
         except Exception as e:
             st.error(f"인터넷 연결 실패: {e}")
 
+    st.write("앱 버전:", VERSION)
     st.write("Streamlit 버전:", st.__version__)
     st.write("Python 버전:", python_version())
     st.write("현재 정렬:", ORDER_INV_MAP.get(ss.current_order, ss.current_order))
