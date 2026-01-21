@@ -1,5 +1,4 @@
 import os
-import re
 import requests
 import streamlit as st
 from datetime import datetime
@@ -11,7 +10,6 @@ from typing import List, Dict, Optional
 st.set_page_config(page_title="INhee Hi‑Fi Music Search", layout="wide")
 
 def load_api_key_safe() -> Optional[str]:
-    """등록된 API 키를 안전하게 로드"""
     key = os.getenv("YOUTUBE_API_KEY")
     if not key:
         try:
@@ -22,10 +20,10 @@ def load_api_key_safe() -> Optional[str]:
 
 YOUTUBE_API_KEY = load_api_key_safe()
 
-# 세션 상태 초기화
 ss = st.session_state
 ss.setdefault("selected_video_id", "LK0sKS6l2V4") 
 ss.setdefault("results", [])
+ss.setdefault("next_token", None)
 ss.setdefault("initialized", False)
 ss.setdefault("last_query", "섹소폰")
 
@@ -39,9 +37,10 @@ with st.sidebar:
     st.markdown("---")
     genre = st.selectbox("장르 선택", ["(선택 없음)", "국내가요", "팝송", "섹소폰", "클래식", "MR/노래방"], index=3)
     instrument = st.selectbox("악기 선택", ["(선택 없음)", "섹소폰", "드럼", "기타", "베이스"], index=1)
-    direct = st.text_input("직접 입력", placeholder="곡 제목이나 가수명")
+    direct = st.text_input("직접 입력", placeholder="곡 제목을 정확히 입력하세요")
 
-    order_map = {"조회수순": "viewCount", "최신순": "date", "관련도순": "relevance"}
+    # 정확도를 위해 '관련도순'을 기본 인덱스로 설정
+    order_map = {"관련도순": "relevance", "조회수순": "viewCount", "최신순": "date"}
     order_label = st.selectbox("정렬 기준", list(order_map.keys()), index=0)
     
     grid_cols = st.slider("한 줄 카드 수", 2, 6, 4)
@@ -49,64 +48,68 @@ with st.sidebar:
     do_search = st.button("✅ 검색 실행 (OK)")
 
 # --------------------
-# CSS (썸네일 클릭 유도를 위한 포인터 추가)
+# CSS (UI 및 카드 전체 클릭 스타일)
 # --------------------
 st.markdown(f"""
 <style>
     :root {{ --ui-scale: {ui_scale}; }}
     html, .stApp {{ font-size: calc(16px * var(--ui-scale)); background: #070b15; color:#e6f1ff; }}
+    
+    /* 카드 전체를 감싸는 버튼 스타일 */
+    .stButton > button {{
+        width: 100%; border: none; padding: 0; background: none; color: inherit; text-align: left;
+    }}
     .card {{
-        display:flex; flex-direction:column; height: 390px; 
-        border-radius:12px; padding:10px; background: rgba(255,255,255,.05);
-        border:1px solid rgba(0,229,255,.2); margin-bottom: 20px;
-        transition: all 0.2s ease;
+        display:flex; flex-direction:column; height: 380px; 
+        border-radius:12px; padding:12px; background: rgba(255,255,255,.05);
+        border:1px solid rgba(0,229,255,.15); transition: all 0.2s;
+        cursor: pointer;
     }}
     .card:hover {{
-        border-color: #00e5ff;
-        background: rgba(255,255,255,.08);
-        transform: translateY(-3px);
-    }}
-    .thumb-btn {{
-        cursor: pointer; /* 이미지 클릭 가능하게 손가락 표시 */
-        border: none;
-        padding: 0;
-        background: none;
-        width: 100%;
+        border-color: #00e5ff; background: rgba(255,255,255,.1); transform: translateY(-5px);
     }}
     .thumb {{
-        position: relative; width: 100%; padding-top: 56.25%; 
-        border-radius: 10px; overflow: hidden;
+        width: 100%; padding-top: 56.25%; border-radius: 8px; overflow: hidden;
         background-size: cover !important; background-position: center !important;
     }}
     .title {{
-        font-weight:700; font-size: calc(0.90rem * var(--ui-scale));
-        margin-top:12px; height: 2.6em; line-height: 1.3;
-        display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+        font-weight:700; font-size: calc(0.9rem * var(--ui-scale));
+        margin-top:12px; height: 2.6em; overflow:hidden; line-height: 1.3;
     }}
-    .badge {{
-        font-size: 0.7rem; padding:2px 6px; border-radius:4px; 
-        background:rgba(0,0,0,0.7); color:#a6f6ff;
+    .channel {{ color:#9dd5ff; font-size: 0.8rem; margin-top:5px; }}
+    
+    /* 하단 더보기 버튼 전용 스타일 */
+    .load-more-btn > div > button {{
+        background: rgba(0,229,255,0.1) !important;
+        border: 1px solid #00e5ff !important;
+        color: #00e5ff !important;
+        height: 50px; font-weight: bold;
     }}
 </style>
 """, unsafe_allow_html=True)
 
 # =============================
-# 2. 검색 엔진 (기존 로직 유지)
+# 2. 검색 엔진
 # =============================
 def build_query(g, i, d):
+    d_clean = d.strip()
     if g == "MR/노래방":
-        return f"{d.strip()} 노래방 MR Inst Karaoke" if d.strip() else "최신 노래방 반주"
-    parts = [p for p in [g, i, d] if p and p != "(선택 없음)"]
+        return f'"{d_clean}" 노래방 MR' if d_clean else "인기 노래방 반주"
+    parts = []
+    if d_clean: parts.append(f'"{d_clean}"')
+    if g and g != "(선택 없음)": parts.append(g)
+    if i and i != "(선택 없음)": parts.append(i)
     return " ".join(parts).strip()
 
 @st.cache_data(ttl=600)
-def search_youtube(query, order, limit):
-    if not YOUTUBE_API_KEY: return []
+def search_youtube(query, order, limit, page_token=None):
+    if not YOUTUBE_API_KEY: return [], None
     try:
         url = "https://www.googleapis.com/youtube/v3/search"
         params = {
             "part": "snippet", "q": query, "type": "video", 
-            "maxResults": limit, "order": order, "key": YOUTUBE_API_KEY
+            "maxResults": limit, "order": order, "key": YOUTUBE_API_KEY,
+            "pageToken": page_token
         }
         res = requests.get(url, params=params).json()
         results = []
@@ -119,8 +122,8 @@ def search_youtube(query, order, limit):
                 "thumb": f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg",
                 "date": it['snippet']['publishedAt'][:10]
             })
-        return results
-    except: return []
+        return results, res.get("nextPageToken")
+    except: return [], None
 
 # =============================
 # 3. 화면 렌더링
@@ -128,51 +131,56 @@ def search_youtube(query, order, limit):
 st.title("🎵 INhee Hi‑Fi Music Search")
 
 if not ss.initialized:
-    ss.results = search_youtube("섹소폰", "viewCount", 24)
+    res, nt = search_youtube("섹소폰", "relevance", 24)
+    ss.results, ss.next_token = res, nt
     ss.initialized = True
 
 if do_search:
     q = build_query(genre, instrument, direct)
     ss.last_query = q
-    ss.results = search_youtube(q, order_map[order_label], batch)
+    res, nt = search_youtube(q, order_map[order_label], batch)
+    ss.results, ss.next_token = res, nt
 
 # [메인 플레이어]
 st.video(f"https://www.youtube.com/watch?v={ss.selected_video_id}")
-st.caption("💡 재생 불가 영상은 아래의 [🌐 유튜브] 버튼을 이용해 주세요.")
+st.info("💡 영상 재생이 안 될 경우, 위 화면 중앙의 'YouTube에서 보기'를 클릭하세요.")
 
 # [결과 그리드]
 if ss.results:
-    st.subheader(f"🎼 '{ss.last_query}' 결과")
+    st.subheader(f"🎼 '{ss.last_query}' 검색 결과")
     for i in range(0, len(ss.results), grid_cols):
         cols = st.columns(grid_cols)
         for j, col in enumerate(cols):
             if i + j < len(ss.results):
                 item = ss.results[i + j]
                 with col:
-                    # 1. 썸네일 클릭 가능하게 만들기
-                    # 썸네일 영역 전체를 클릭하면 재생되도록 invisible button 기법 활용
-                    with st.container():
-                        st.markdown(f"""
+                    # 카드 전체 버튼 (클릭 시 재생)
+                    if st.button("", key=f"card_{item['id']}_{i}_{j}"):
+                        ss.selected_video_id = item['id']
+                        st.rerun()
+                    
+                    # 카드 UI 디자인 (버튼 위에 겹침)
+                    st.markdown(f"""
+                    <div style="margin-top:-65px; pointer-events:none;">
                         <div class="card">
-                            <div class="thumb" style="background-image: url('{item['thumb']}');">
-                                <div style="position:absolute; bottom:5px; right:5px;">
-                                    <span class="badge">📅 {item['date']}</span>
-                                </div>
-                            </div>
+                            <div class="thumb" style="background-image: url('{item['thumb']}');"></div>
                             <div class="title">{item['title']}</div>
-                            <div style="color:#9dd5ff; font-size:0.75rem; margin-top:5px;">{item['channel']}</div>
+                            <div class="channel">{item['channel']}</div>
+                            <div style="font-size:0.7rem; color:gray; margin-top:auto;">📅 {item['date']}</div>
                         </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # 버튼 레이아웃
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            # 이 버튼이 클릭되면 selected_video_id가 변경됨
-                            if st.button("▶ 재생", key=f"play_{item['id']}"):
-                                ss.selected_video_id = item['id']
-                                st.rerun()
-                        with c2:
-                            url = f"https://www.youtube.com/watch?v={item['id']}"
-                            st.link_button("🌐 유튜브", url, use_container_width=True)
+                    </div>
+                    """, unsafe_allow_html=True)
 
-# =============================
+    # --------------------
+    # [더 보기 버튼 복구]
+    # --------------------
+    if ss.next_token:
+        st.markdown('<div class="load-more-btn">', unsafe_allow_html=True)
+        if st.button("＋ 더 보기", use_container_width=True):
+            with st.spinner("추가 결과 불러오는 중..."):
+                q = build_query(genre, instrument, direct) if ss.last_query != "섹소폰" else "섹소폰"
+                new_res, new_token = search_youtube(q, order_map[order_label], batch, page_token=ss.next_token)
+                ss.results.extend(new_res)
+                ss.next_token = new_token
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
