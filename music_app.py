@@ -14,7 +14,7 @@ from typing import List, Dict, Tuple, Optional
 from platform import python_version
 from datetime import datetime, timezone
 
-VERSION = f"2026-01-21 Unified v5 (default-sax+viewCount, thumb-div+overlay, secrets-safe) @ {datetime.now().strftime('%H:%M:%S')}"
+VERSION = f"2026-01-21 Unified v6 (fix f-string CSS, default-sax+viewCount) @ {datetime.now().strftime('%H:%M:%S')}"
 
 # --------------------
 # 매핑
@@ -81,7 +81,7 @@ with st.sidebar:
     batch = st.slider("한 번에 불러올 개수", 12, 60, 24, step=4)
 
     st.markdown("---")
-    # 로컬 개발 편의: 임시 키 입력 시 API 모드로 전환
+    # 로컬 개발 편의: 임시 키 입력 시 API 모드 전환
     if not api_key_present:
         dev_key_input = st.text_input("개발용 키 입력(선택)", type="password",
                                       help="로컬에서만 임시로 입력하세요. 운영에선 secrets/환경변수 권장.")
@@ -93,31 +93,31 @@ with st.sidebar:
     do_search = st.button("✅ OK (검색 실행)")
 
 # ============================
-# CSS (실제 <style> 태그) + UI 배율 반영
+# CSS (f-string 사용 금지 → 안전 치환 방식으로 배율만 주입)
 # ============================
-CUSTOM_CSS = f"""
+CUSTOM_CSS = """
 <style>
-:root {{
-  --ui-scale: {ui_scale};
-}}
-html, .stApp {{
+:root {
+  --ui-scale: __UI_SCALE__;
+}
+html, .stApp {
   font-size: calc(16px * var(--ui-scale));
-}}
-.stApp {{
+}
+.stApp {
   background: radial-gradient(1200px 800px at 8% 10%, #0a0f1f 0%, #080d1a 50%, #070b15 100%);
   color:#e6f1ff;
   font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Noto Sans KR", sans-serif;
-}}
-h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
+}
+h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
 
-.glass {{
+.glass {
   background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
   border:1px solid rgba(0,229,255,.18);
   border-radius:14px;
   backdrop-filter:blur(10px);
   box-shadow:0 10px 26px rgba(0,20,50,.35);
-}}
-.stButton>button {{
+}
+.stButton>button {
   background:linear-gradient(120deg,#0b0f1a,#111827);
   border:1px solid rgba(0,229,255,.25)!important;
   color:#eaf7ff;
@@ -126,29 +126,29 @@ h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
   border-radius:10px;
   transition:transform .06s ease, box-shadow .2s ease, border .2s ease, background .25s ease;
   font-size: calc(0.95rem * var(--ui-scale));
-}}
-.stButton>button:hover {{
+}
+.stButton>button:hover {
   transform: translateY(-1px);
   box-shadow:0 8px 18px rgba(0,229,255,.18);
   border:1px solid rgba(0,229,255,.45)!important;
   background:linear-gradient(120deg,#0e1422,#182236);
-}}
+}
 .stTextInput>div>div>input,
-.stSelectbox div[data-baseweb="select"]>div {{
+.stSelectbox div[data-baseweb="select"]>div {
   background:rgba(255,255,255,.05)!important;
   border:1px solid rgba(0,229,255,.18)!important;
   color:#e6f1ff!important;
   border-radius:10px!important;
-}}
-.video-frame {{
+}
+.video-frame {
   border-radius:14px;
   overflow:hidden;
   border:1px solid rgba(0,229,255,.18);
   box-shadow:0 16px 34px rgba(0,0,0,.35);
-}}
+}
 
 /* 카드 */
-.card {{
+.card {
   display:flex;
   flex-direction:column;
   justify-content:flex-start;
@@ -159,15 +159,15 @@ h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
   background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
   border:1px solid rgba(0,229,255,.15);
   transition: transform .06s ease, box-shadow .2s ease, border .2s ease;
-}}
-.card:hover {{
+}
+.card:hover {
   transform: translateY(-2px);
   box-shadow:0 12px 22px rgba(0,229,255,.16);
   border:1px solid rgba(0,229,255,.35);
-}}
+}
 
 /* 썸네일(고정 비율 16:9 + 배경이미지) */
-.thumb {{
+.thumb {
   position: relative;
   width: 100%;
   padding-top: 56.25%; /* 16:9 */
@@ -182,7 +182,7 @@ h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
 }
 
 /* 썸네일 오버레이(조회수/날짜/길이) */
-.thumb .overlay {{
+.thumb .overlay {
   position: absolute;
   inset: 0;
   display: flex;
@@ -192,12 +192,12 @@ h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
   background: linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(0,0,0,0.45) 100%);
   color: #eaf7ff;
   font-size: calc(0.85rem * var(--ui-scale));
-}}
-.thumb .ov-left, .thumb .ov-right {{
+}
+.thumb .ov-left, .thumb .ov-right {
   display: flex;
   gap: 6px;
-}}
-.badge {{
+}
+.badge {
   display:inline-block;
   font-size: calc(0.80rem * var(--ui-scale));
   padding:2px 8px;
@@ -207,19 +207,19 @@ h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
   background:rgba(0,229,255,.14);
   backdrop-filter: blur(2px);
   white-space: nowrap; /* 줄바꿈 방지 */
-}}
+}
 
-.card .textwrap {{
+.card .textwrap {
   display:flex;
   flex-direction:column;
   margin-top:8px;
   min-height: calc(1.2em * 2 + 6px + 1.2em);
   max-height: calc(1.2em * 2 + 6px + 1.2em);
-}}
+}
 .card .title,
-.card .meta {{ margin: 0; }}
+.card .meta { margin: 0; }
 
-.card .title {{
+.card .title {
   font-weight:700;
   color:#eaf7ff;
   line-height: 1.2em;
@@ -231,8 +231,8 @@ h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
   min-height: calc(1.2em * 2);
   max-height: calc(1.2em * 2);
   font-size: calc(1.0rem * var(--ui-scale));
-}}
-.card .meta {{
+}
+.card .meta {
   font-size: calc(0.9rem * var(--ui-scale));
   color:#9dd5ff;
   line-height: 1.2em;
@@ -244,11 +244,12 @@ h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
   text-overflow:ellipsis;
   min-height: 1.2em;
   max-height: 1.2em;
-}}
+}
 
-.section {{ padding:14px 16px; }}
+.section { padding:14px 16px; }
 </style>
-"""
+""".replace("__UI_SCALE__", f"{ui_scale}")
+
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # ============================
