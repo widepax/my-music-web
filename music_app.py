@@ -1,9 +1,9 @@
 
 # =============================
-# INhee Hi‑Fi Music Search (Final Unified • secrets-safe • thumbnail-fallback • grid/height • UI-scale)
+# INhee Hi‑Fi Music Search
+# (Final Unified • default: 섹소폰+조회수 • secrets-safe • thumbnail-div+overlay • grid/height • UI-scale)
 # =============================
 
-# --- Imports ---
 import os
 import re
 import json
@@ -12,13 +12,13 @@ import requests
 import streamlit as st
 from typing import List, Dict, Tuple, Optional
 from platform import python_version
-from datetime import datetime
+from datetime import datetime, timezone
+
+VERSION = f"2026-01-21 Unified v5 (default-sax+viewCount, thumb-div+overlay, secrets-safe) @ {datetime.now().strftime('%H:%M:%S')}"
 
 # --------------------
-# Version / Mapping
+# 매핑
 # --------------------
-VERSION = f"2026-01-21 Unified v3 (thumb-fallback+secrets-safe+grid/height+UI-scale) @ {datetime.now().strftime('%H:%M:%S')}"
-
 ORDER_LABEL_MAP = {
     "조회수 많은 순": "viewCount",
     "관련도 순": "relevance",
@@ -28,7 +28,7 @@ ORDER_LABEL_MAP = {
 ORDER_INV_MAP = {v: k for k, v in ORDER_LABEL_MAP.items()}
 
 # --------------------
-# Page Config
+# 페이지 설정
 # --------------------
 st.set_page_config(
     page_title="INhee Hi‑Fi Music Search",
@@ -37,32 +37,29 @@ st.set_page_config(
 )
 
 # ============================
-# Safe secrets loading (env → secrets → None)
+# 안전한 API 키 로딩 (환경변수 → secrets → None)
 # ============================
 def load_youtube_api_key() -> Optional[str]:
-    # 1) Environment variable first
     key = os.getenv("YOUTUBE_API_KEY")
     if key:
         return key
-    # 2) Streamlit secrets (guard: may raise when secrets.toml absent)
     try:
         key = st.secrets["YOUTUBE_API_KEY"]
         if key:
             return key
     except Exception:
         pass
-    # 3) None → fallback to scraping mode
     return None
 
 YOUTUBE_API_KEY = load_youtube_api_key()
 
 # ============================
-# Sidebar (render first)
+# 사이드바 (디폴트: 섹소폰 + 조회수 많은 순)
 # ============================
 with st.sidebar:
     st.header("🔎 검색 설정")
 
-    # UI scale (for small preview fonts in web VS Code)
+    # 글자/UI 배율
     ui_scale = st.slider("👁 글자/UI 배율", 0.9, 1.6, 1.20, 0.05,
                          help="미리보기 글자가 작다면 1.15~1.30 정도로 키워 보세요.")
 
@@ -71,10 +68,12 @@ with st.sidebar:
     st.write("🧭 모드:", "API" if api_key_present else "SCRAPING (임시)")
 
     st.markdown("---")
-    genre = st.selectbox("장르 선택", ["(선택 없음)", "국내가요", "팝송", "섹소폰", "클래식"], index=0)
-    instrument = st.selectbox("악기 선택", ["(선택 없음)", "섹소폰", "드럼", "기타", "베이스"], index=0)
+    # ✅ 디폴트: 섹소폰
+    genre = st.selectbox("장르 선택", ["(선택 없음)", "국내가요", "팝송", "섹소폰", "클래식"], index=3)
+    instrument = st.selectbox("악기 선택", ["(선택 없음)", "섹소폰", "드럼", "기타", "베이스"], index=1)
     direct = st.text_input("직접 입력", placeholder="예: 재즈 발라드, Beatles")
 
+    # ✅ 디폴트: 조회수 많은 순
     order_label = st.selectbox("정렬 기준", list(ORDER_LABEL_MAP.keys()), index=0)
     current_order = ORDER_LABEL_MAP[order_label]
 
@@ -82,7 +81,7 @@ with st.sidebar:
     batch = st.slider("한 번에 불러올 개수", 12, 60, 24, step=4)
 
     st.markdown("---")
-    # Dev convenience: temporary key input to switch to API mode locally
+    # 로컬 개발 편의: 임시 키 입력 시 API 모드로 전환
     if not api_key_present:
         dev_key_input = st.text_input("개발용 키 입력(선택)", type="password",
                                       help="로컬에서만 임시로 입력하세요. 운영에선 secrets/환경변수 권장.")
@@ -94,7 +93,7 @@ with st.sidebar:
     do_search = st.button("✅ OK (검색 실행)")
 
 # ============================
-# CSS (real <style> tag) with ui_scale
+# CSS (실제 <style> 태그) + UI 배율 반영
 # ============================
 CUSTOM_CSS = f"""
 <style>
@@ -166,16 +165,50 @@ h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
   box-shadow:0 12px 22px rgba(0,229,255,.16);
   border:1px solid rgba(0,229,255,.35);
 }}
-.card img {{
-  width:100%;
-  height:170px;
-  object-fit:cover;
-  border-radius:10px;
-  /* 썸네일 로딩/실패 시 빈칸 방지 스켈레톤 배경 */
-  background: linear-gradient(135deg, #0b1220 0%, #0e1627 100%);
+
+/* 썸네일(고정 비율 16:9 + 배경이미지) */
+.thumb {{
+  position: relative;
+  width: 100%;
+  padding-top: 56.25%; /* 16:9 */
+  border-radius: 10px;
+  overflow: hidden;
+  background-position: center center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  background-image: linear-gradient(135deg, #0b1220 0%, #0e1627 100%); /* 로딩 스켈레톤 */
+  border:1px solid rgba(0,229,255,.18);
+  box-shadow:0 4px 14px rgba(0,0,0,.25);
+}
+
+/* 썸네일 오버레이(조회수/날짜/길이) */
+.thumb .overlay {{
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between; /* 좌/우 배치 */
+  padding: 8px;
+  background: linear-gradient(180deg, rgba(0,0,0,0) 55%, rgba(0,0,0,0.45) 100%);
+  color: #eaf7ff;
+  font-size: calc(0.85rem * var(--ui-scale));
+}}
+.thumb .ov-left, .thumb .ov-right {{
+  display: flex;
+  gap: 6px;
+}}
+.badge {{
+  display:inline-block;
+  font-size: calc(0.80rem * var(--ui-scale));
+  padding:2px 8px;
+  border-radius:999px;
+  border:1px solid rgba(0,229,255,.35);
+  color:#a6f6ff;
+  background:rgba(0,229,255,.14);
+  backdrop-filter: blur(2px);
+  white-space: nowrap; /* 줄바꿈 방지 */
 }}
 
-/* 텍스트 영역 높이 고정(제목 2줄 + 메타 1줄) */
 .card .textwrap {{
   display:flex;
   flex-direction:column;
@@ -214,21 +247,12 @@ h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
 }}
 
 .section {{ padding:14px 16px; }}
-.badge {{
-  display:inline-block;
-  font-size: calc(0.85rem * var(--ui-scale));
-  padding:4px 8px;
-  border-radius:999px;
-  border:1px solid rgba(0,229,255,.35);
-  color:#a6f6ff;
-  background:rgba(0,229,255,.06);
-}}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # ============================
-# Utils
+# 유틸
 # ============================
 def parse_iso8601_duration(iso: str) -> str:
     h = re.search(r"(\d+)H", iso or "")
@@ -242,6 +266,30 @@ def parse_iso8601_duration(iso: str) -> str:
         return "LIVE/SHORT"
     return f"{hh:d}:{mm:02d}:{ss:02d}" if hh else f"{mm:d}:{ss:02d}"
 
+def format_views_kr(n: Optional[str]) -> str:
+    """1234567 -> '123만' / '1.2억' (한국식 축약). 실패 시 'N/A'."""
+    try:
+        v = int(n)
+    except Exception:
+        return "N/A"
+    if v >= 100_000_000:   # 1억
+        s = f"{v/100_000_000:.1f}".rstrip('0').rstrip('.')
+        return f"{s}억"
+    if v >= 10_000:        # 1만
+        s = f"{v/10_000:.1f}".rstrip('0').rstrip('.')
+        return f"{s}만"
+    return f"{v}"
+
+def format_date_iso_kr(iso: Optional[str]) -> str:
+    """ISO8601 -> 'YYYY.MM.DD' (한국식). 실패 시 'N/A'."""
+    if not iso:
+        return "N/A"
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone(timezone.utc)
+        return dt.strftime("%Y.%m.%d")
+    except Exception:
+        return "N/A"
+
 def dedupe_by_video_id(items: List[Dict]) -> List[Dict]:
     seen = set()
     out = []
@@ -253,21 +301,13 @@ def dedupe_by_video_id(items: List[Dict]) -> List[Dict]:
         out.append(it)
     return out
 
-# --- Thumbnail fallback utils ---
-PLACEHOLDER_THUMB = "https://via.placeholder.com/320x180/0b1220/9dd5ff?text=No+Thumbnail"
+# --- 썸네일 폴백 유틸 ---
+PLACEHOLDER_THUMB = "https://via.placeholder.com/480x270/0b1220/9dd5ff?text=No+Thumbnail"
 
 def build_thumb_url_from_id(video_id: str) -> str:
-    """
-    Use a stable YouTube thumbnail path.
-    hqdefault is widely available; maxres may not exist for some videos.
-    """
     return f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
 
 def sanitize_thumb_url(video_id: Optional[str], api_thumb_dict: Optional[dict]) -> str:
-    """
-    Prefer API-provided thumbnails if present;
-    otherwise fallback to i.ytimg.com path; if no video_id, use placeholder.
-    """
     if api_thumb_dict and isinstance(api_thumb_dict, dict):
         for key in ("medium", "high", "default"):
             v = api_thumb_dict.get(key)
@@ -306,11 +346,20 @@ def yt_api_search(query: str, order: str = "viewCount", max_results: int = 50, p
     items = data.get("items", [])
     next_token = data.get("nextPageToken")
 
-    ids = [it.get("id", {}).get("videoId") for it in items if it.get("id", {}).get("videoId")]
+    # search.list에서 videoId, snippet.publishedAt 수집
+    published_map = {}
+    ids = []
+    for it in items:
+        vid = it.get("id", {}).get("videoId")
+        if vid:
+            ids.append(vid)
+            published_map[vid] = (it.get("snippet", {}) or {}).get("publishedAt")
+
     durations = {}
+    viewcounts = {}
     if ids:
         params2 = {
-            "part": "contentDetails",
+            "part": "contentDetails,statistics",
             "id": ",".join(ids),
             "key": YOUTUBE_API_KEY,
             "maxResults": 50
@@ -321,19 +370,32 @@ def yt_api_search(query: str, order: str = "viewCount", max_results: int = 50, p
         for v in dv.get("items", []):
             vid = v["id"]
             durations[vid] = parse_iso8601_duration(v.get("contentDetails", {}).get("duration", "PT0S"))
+            viewcounts[vid] = (v.get("statistics", {}) or {}).get("viewCount")
 
     results: List[Dict] = []
     for it in items:
-        vid = it["id"]["videoId"]
-        sn = it.get("snippet", {})
-        thumbs = sn.get("thumbnails", {})
+        vid = it.get("id", {}).get("videoId")
+        if not vid:
+            continue
+        sn = it.get("snippet", {}) or {}
+        thumbs = sn.get("thumbnails", {}) or {}
         thumb_url = sanitize_thumb_url(vid, thumbs)
+
+        views_raw = viewcounts.get(vid)              # "1234567"
+        date_iso = published_map.get(vid)            # "2026-01-20T..."
+        views_display = format_views_kr(views_raw)   # "123만"
+        date_display  = format_date_iso_kr(date_iso) # "2026.01.20"
+
         results.append({
             "video_id": vid,
             "title": sn.get("title", ""),
             "channel": sn.get("channelTitle", ""),
             "thumbnail": thumb_url,
-            "duration": durations.get(vid, "LIVE/SHORT")
+            "duration": durations.get(vid, "LIVE/SHORT"),
+            "views": views_raw,
+            "published_at": date_iso,
+            "views_display": views_display,
+            "date_display": date_display
         })
     return results, next_token
 
@@ -402,13 +464,35 @@ def scrape_youtube_search(query: str, max_items: int = 50) -> Tuple[List[Dict], 
             owner_runs = (((vr.get("ownerText") or {}).get("runs")) or [{"text": ""}])
             channel = owner_runs[0].get("text", "")
             length = ((vr.get("lengthText") or {}).get("simpleText")) or "LIVE/SHORT"
+
+            # 스크래핑 모드에서는 YouTube가 보여주는 텍스트를 최대한 활용
+            vtext_obj = (vr.get("viewCountText") or {})
+            if isinstance(vtext_obj, dict):
+                v_simple = vtext_obj.get("simpleText")
+                if not v_simple and isinstance(vtext_obj.get("runs"), list) and vtext_obj["runs"]:
+                    v_simple = "".join([r.get("text", "") for r in vtext_obj["runs"]])
+            else:
+                v_simple = None
+
+            ptext_obj = (vr.get("publishedTimeText") or {})
+            if isinstance(ptext_obj, dict):
+                p_simple = ptext_obj.get("simpleText")
+                if not p_simple and isinstance(ptext_obj.get("runs"), list) and ptext_obj["runs"]:
+                    p_simple = "".join([r.get("text", "") for r in ptext_obj["runs"]])
+            else:
+                p_simple = None
+
             if vid and title:
                 results.append({
                     "video_id": vid,
                     "title": title,
                     "channel": channel,
                     "thumbnail": sanitize_thumb_url(vid, None),
-                    "duration": length
+                    "duration": length,
+                    "views": None,
+                    "published_at": None,
+                    "views_display": v_simple or "N/A",   # 예: "조회수 123만회"
+                    "date_display": p_simple or "N/A"     # 예: "3년 전"
                 })
             if len(results) >= max_items:
                 break
@@ -418,7 +502,7 @@ def scrape_youtube_search(query: str, max_items: int = 50) -> Tuple[List[Dict], 
         return [], None, None, str(e)
 
 # ============================
-# Session state
+# 세션 상태
 # ============================
 ss = st.session_state
 ss.setdefault("selected_video_id", "LK0sKS6l2V4")
@@ -429,7 +513,7 @@ ss.setdefault("use_scraping", not bool(YOUTUBE_API_KEY))
 ss.setdefault("current_order", "viewCount")
 
 # ============================
-# Title & Player
+# 상단 타이틀 & 플레이어
 # ============================
 st.title("🎵 INhee Hi‑Fi Music Search")
 st.caption(f"App VERSION: {VERSION}")
@@ -442,7 +526,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================
-# Search logic
+# 검색 로직
 # ============================
 def build_query(g: str, i: str, q: str) -> str:
     parts = []
@@ -495,7 +579,7 @@ if do_search:
         run_search(q, batch, ss.current_order)
 
 # ============================
-# Results (row-wise grid + "more")
+# 결과 렌더링 (행 단위 그리드 + 더보기)
 # ============================
 st.markdown('<div class="section glass">', unsafe_allow_html=True)
 st.subheader("🎼 검색 결과")
@@ -516,12 +600,33 @@ elif ss.results:
             with cols[col_idx]:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
 
+                # 썸네일(배경이미지) + 오버레이(조회수/날짜/길이)
                 vid = item.get("video_id")
                 thumb = item.get("thumbnail")
                 if not thumb or not isinstance(thumb, str):
                     thumb = sanitize_thumb_url(vid, None)
-                st.image(thumb, use_container_width=True)
 
+                # 화면용 표시값
+                views_disp = item.get("views_display") or "N/A"
+                date_disp  = item.get("date_display")  or "N/A"
+                dur_disp   = item.get("duration")       or ""
+
+                thumb_html = f"""
+                <div class="thumb" style="background-image: url('{thumb}');">
+                  <div class="overlay">
+                    <div class="ov-left">
+                      <span class="badge">👁 {views_disp}</span>
+                      <span class="badge">📅 {date_disp}</span>
+                    </div>
+                    <div class="ov-right">
+                      <span class="badge">⏱ {dur_disp}</span>
+                    </div>
+                  </div>
+                </div>
+                """
+                st.markdown(thumb_html, unsafe_allow_html=True)
+
+                # 텍스트
                 st.markdown('<div class="textwrap">', unsafe_allow_html=True)
                 st.markdown(f'<div class="title">{item.get("title","")}</div>', unsafe_allow_html=True)
                 st.markdown(
@@ -530,11 +635,10 @@ elif ss.results:
                 )
                 st.markdown('</div>', unsafe_allow_html=True)
 
-                st.markdown('<div class="btnwrap">', unsafe_allow_html=True)
+                # 버튼
                 if st.button("▶ 재생", key=f"play_{item['video_id']}_{row_start}_{col_idx}", use_container_width=True):
                     ss.selected_video_id = item["video_id"]
                     st.rerun()
-                st.markdown('</div>', unsafe_allow_html=True)
 
                 st.markdown('</div>', unsafe_allow_html=True)
 
@@ -559,7 +663,7 @@ else:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================
-# Dev tools / Diagnostics
+# 개발자 도구 / 진단
 # ============================
 with st.expander("🛠️ 개발자 도구 / 진단"):
     c1, c2 = st.columns(2)
@@ -578,8 +682,6 @@ with st.expander("🛠️ 개발자 도구 / 진단"):
     st.write("Python 버전:", python_version())
     st.write("현재 정렬:", ORDER_INV_MAP.get(ss.current_order, ss.current_order))
     st.write("API 모드 여부:", "예" if not ss.use_scraping else "아니오")
-
-    # Runtime file info (for web IDE)
     try:
         st.write("RUN FILE:", __file__)
     except Exception:
