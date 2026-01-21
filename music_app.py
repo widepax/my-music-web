@@ -1,13 +1,6 @@
 
 # =============================
-# INhee Hi‑Fi Music Search (Unified)
-# - OK 버튼 트리거
-# - YouTube API (권장) + 스크래핑 대체
-# - 정규식 제거(괄호 불균형 방지) 스크래핑
-# - 캐시 데코레이터 폴리필 + 진단/캐시 클리어
-# - 썸네일 그리드, 더 보기(무제한), 즉시 재생
-# - StreamlitDuplicateElementKey 방지(고유 key/중복 제거)
-# - 세련된 네온/글래스 UI
+# INhee Hi‑Fi Music Search (Unified, dark UI + dedupe + unique keys)
 # =============================
 
 # --- 반드시 최상단: import & cache 데코레이터 폴리필 ---
@@ -32,7 +25,7 @@ from platform import python_version
 import os
 
 # --- 배포 반영 상태 확인용 버전 배너(매 커밋 시 숫자 변경 권장) ---
-VERSION = "2026-01-21-13:45 KST (unified+dedupe+unique_keys)"
+VERSION = "2026-01-21-14:25 KST (dark-ui+clamp+dedupe+unique-keys)"
 
 # ------------------------------------------------
 # 페이지/테마/CSS
@@ -45,28 +38,117 @@ st.set_page_config(
 
 CUSTOM_CSS = """
 <style>
-.stApp { background: radial-gradient(1200px 800px at 8% 10%, #0f1834 0%, #0b1221 45%, #0b1221 100%); color:#e6f1ff; }
-h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
-.glass { background:linear-gradient(160deg,rgba(255,255,255,.06),rgba(255,255,255,.02));
-         border:1px solid rgba(0,229,255,.25); border-radius:14px; backdrop-filter:blur(10px);
-         box-shadow:0 10px 30px rgba(0,20,50,.4); }
-.stButton>button { background:linear-gradient(120deg,#0ea5b1,#1c70a3);
-                   border:1px solid rgba(0,229,255,.45)!important; color:#ecfeff; font-weight:700;
-                   padding:.6rem 1rem; border-radius:10px; }
-.stTextInput>div>div>input, .stSelectbox div[data-baseweb="select"]>div {
-  background:rgba(255,255,255,.06)!important; border:1px solid rgba(0,229,255,.25)!important;
-  color:#e6f1ff!important; border-radius:10px!important;
+/* 배경 + 기본 폰트 */
+.stApp {
+  background: radial-gradient(1200px 800px at 8% 10%, #0a0f1f 0%, #080d1a 50%, #070b15 100%);
+  color:#e6f1ff;
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Noto Sans KR", sans-serif;
 }
-.video-frame { border-radius:14px; overflow:hidden; border:1px solid rgba(0,229,255,.25); box-shadow:0 18px 40px rgba(0,0,0,.35); }
-.card { cursor:pointer; border-radius:12px; padding:10px; background:linear-gradient(160deg,rgba(255,255,255,.06),rgba(255,255,255,.02));
-        border:1px solid rgba(0,229,255,.20); transition: transform .06s ease, box-shadow .2s ease, border .2s ease; }
-.card:hover { transform: translateY(-2px); box-shadow:0 12px 24px rgba(0,229,255,.18); border:1px solid rgba(0,229,255,.45); }
-.card img { width:100%; height:170px; object-fit:cover; border-radius:10px; }
-.card .title { font-weight:700; margin-top:8px; color:#eaf7ff; }
-.card .meta { font-size: .88rem; color:#9dd5ff; }
+h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
+
+/* 글래스 카드 */
+.glass {
+  background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
+  border:1px solid rgba(0,229,255,.18);
+  border-radius:14px;
+  backdrop-filter:blur(10px);
+  box-shadow:0 10px 26px rgba(0,20,50,.35);
+}
+
+/* 버튼 - 더 검은 톤 */
+.stButton>button {
+  background:linear-gradient(120deg,#0b0f1a,#111827);
+  border:1px solid rgba(0,229,255,.25)!important;
+  color:#eaf7ff;
+  font-weight:700;
+  padding:.58rem .95rem;
+  border-radius:10px;
+  transition:transform .06s ease, box-shadow .2s ease, border .2s ease, background .25s ease;
+}
+.stButton>button:hover {
+  transform: translateY(-1px);
+  box-shadow:0 8px 18px rgba(0,229,255,.18);
+  border:1px solid rgba(0,229,255,.45)!important;
+  background:linear-gradient(120deg,#0e1422,#182236);
+}
+
+/* 입력/셀렉트 - 다크 톤 */
+.stTextInput>div>div>input,
+.stSelectbox div[data-baseweb="select"]>div {
+  background:rgba(255,255,255,.05)!important;
+  border:1px solid rgba(0,229,255,.18)!important;
+  color:#e6f1ff!important;
+  border-radius:10px!important;
+}
+
+/* 플레이어 프레임 */
+.video-frame {
+  border-radius:14px;
+  overflow:hidden;
+  border:1px solid rgba(0,229,255,.18);
+  box-shadow:0 16px 34px rgba(0,0,0,.35);
+}
+
+/* 카드 */
+.card {
+  cursor:pointer;
+  border-radius:12px;
+  padding:10px;
+  background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
+  border:1px solid rgba(0,229,255,.15);
+  transition: transform .06s ease, box-shadow .2s ease, border .2s ease;
+}
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow:0 12px 22px rgba(0,229,255,.16);
+  border:1px solid rgba(0,229,255,.35);
+}
+
+/* 썸네일 */
+.card img {
+  width:100%;
+  height:170px;
+  object-fit:cover;
+  border-radius:10px;
+}
+
+/* 제목/메타 - 줄수 제한(클램프)로 카드 높이 균일화 */
+.card .title {
+  font-weight:700;
+  margin-top:8px;
+  color:#eaf7ff;
+  display:-webkit-box;
+  -webkit-line-clamp:2;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  min-height: 44px; /* 2줄 높이 확보 */
+}
+.card .meta {
+  font-size:.88rem;
+  color:#9dd5ff;
+  margin-top:4px;
+  display:-webkit-box;
+  -webkit-line-clamp:1;
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  min-height: 20px; /* 1줄 높이 확보 */
+}
+
+/* 섹션 여백 */
 .section { padding:14px 16px; }
-.badge { display:inline-block; font-size:.8rem; padding:4px 8px; border-radius:999px; border:1px solid rgba(0,229,255,.4);
-         color:#a6f6ff; background:rgba(0,229,255,.06); }
+
+/* 배지 */
+.badge {
+  display:inline-block;
+  font-size:.8rem;
+  padding:4px 8px;
+  border-radius:999px;
+  border:1px solid rgba(0,229,255,.35);
+  color:#a6f6ff;
+  background:rgba(0,229,255,.06);
+}
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -404,12 +486,10 @@ elif ss.results:
                 new, new_token = yt_api_search(ss.last_query, max_results=batch, page_token=ss.next_token)
                 # 새 결과 먼저 중복 제거
                 new = dedupe_by_video_id(new)
-                before = len(ss.results)
+                # 확장 후에도 다시 한 번 중복 제거
                 ss.results.extend(new)
                 ss.results = dedupe_by_video_id(ss.results)
-                after = len(ss.results)
                 ss.next_token = new_token
-                st.info(f"새로 {after - before}개 추가(중복 제외). 총 {after}개")
                 st.rerun()
 else:
     st.info("좌측에서 조건을 선택/입력하고 **OK** 버튼을 눌러 검색을 시작해 보세요.")
@@ -417,7 +497,7 @@ else:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ------------------------------------------------
-# 개발자 도구: 캐시/재실행/진단
+# 개발자 도구: 캐시/재실행/진단 (조용히 Expander 안에)
 # ------------------------------------------------
 with st.expander("🛠️ 개발자 도구 / 진단"):
     c1, c2, c3 = st.columns(3)
