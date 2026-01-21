@@ -1,7 +1,7 @@
 import os
 import requests
 import streamlit as st
-from datetime import datetime
+import webbrowser  # 특정 채널 외부 재생을 위해 추가
 from typing import List, Dict, Optional
 
 # =============================
@@ -27,7 +27,7 @@ ss.setdefault("next_token", None)
 ss.setdefault("initialized", False)
 ss.setdefault("last_query", "섹소폰")
 
-# 사이드바 설정 (기존 로직 100% 유지)
+# 사이드바 설정
 with st.sidebar:
     st.header("🔎 검색 설정")
     ui_scale = st.slider("👁 글자/UI 배율", 0.9, 1.6, 1.20, 0.05)
@@ -41,20 +41,19 @@ with st.sidebar:
     batch = st.slider("검색 개수", 12, 60, 24, step=4)
     do_search = st.button("✅ 검색 실행 (OK)")
 
-# CSS: 클릭 문제를 해결하는 최상단 레이어 설정
+# CSS: 카드 전체 클릭 가능하도록 레이어 수정
 st.markdown(f"""
 <style>
     :root {{ --ui-scale: {ui_scale}; }}
     html, .stApp {{ font-size: calc(16px * var(--ui-scale)); background: #070b15; color:#e6f1ff; }}
     
-    /* 카드 전체를 감싸는 상자 */
     .card-outer {{
         position: relative;
         width: 100%;
         margin-bottom: 25px;
+        cursor: pointer;
     }}
 
-    /* 디자인 레이어: pointer-events: none으로 클릭이 통과되게 함 */
     .card-design {{
         position: relative;
         background: rgba(255,255,255,0.05);
@@ -65,24 +64,30 @@ st.markdown(f"""
         pointer-events: none; 
         transition: all 0.2s;
     }}
+    
     .card-outer:hover .card-design {{
         border-color: #00e5ff;
         background: rgba(255,255,255,0.1);
         transform: translateY(-5px);
     }}
 
-    /* 클릭을 받는 실제 버튼 레이어: z-index를 높여 디자인 위로 올림 */
-    .card-outer div[data-testid="stButton"] > button {{
+    /* 투명 버튼이 카드 전체를 덮도록 설정 */
+    .card-outer div[data-testid="stButton"] {{
         position: absolute !important;
         top: 0 !important;
         left: 0 !important;
         width: 100% !important;
         height: 100% !important;
+        z-index: 10 !important;
+    }}
+    
+    .card-outer div[data-testid="stButton"] > button {{
+        width: 100% !important;
+        height: 100% !important;
         background: transparent !important;
-        color: transparent !important;
         border: none !important;
-        z-index: 10 !important; /* 디자인보다 무조건 위 */
-        cursor: pointer !important;
+        color: transparent !important;
+        padding: 0 !important;
         margin: 0 !important;
     }}
 
@@ -101,7 +106,7 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# 조회수 및 검색 함수 (로직 유지)
+# 검색 결과 처리 및 포맷
 def format_views(count):
     if not count: return "0"
     c = int(count)
@@ -127,9 +132,16 @@ def search_youtube(query, order, limit, page_token=None):
         return results, res.get("nextPageToken")
     except: return [], None
 
+# MR/노래방 키워드 강화 로직 반영
 def build_query(g, i, d):
     d_clean = d.strip()
-    if g == "MR/노래방": return f'"{d_clean}" 노래방' if d_clean else "인기 노래방 반주"
+    if g == "MR/노래방":
+        if d_clean:
+            # 곡 제목이 있을 경우 요청하신 핵심 키워드 조합
+            return f'"{d_clean}" (노래방 OR MR OR Instrument OR Karaoke)'
+        else:
+            return "인기 노래방 반주"
+    
     parts = [f'"{d_clean}"'] if d_clean else []
     if g != "(선택 없음)": parts.append(g)
     if i != "(선택 없음)": parts.append(i)
@@ -159,7 +171,7 @@ if ss.results:
             if idx < len(ss.results):
                 item = ss.results[idx]
                 with col:
-                    # 클릭 영역을 정의하는 컨테이너
+                    # 카드 레이아웃
                     st.markdown(f"""
                     <div class="card-outer">
                         <div class="card-design">
@@ -170,10 +182,20 @@ if ss.results:
                         </div>
                     """, unsafe_allow_html=True)
                     
-                    # 이 버튼이 투명한 상태로 디자인 위를 완전히 덮어 클릭을 가로챔
+                    # 버튼 클릭 이벤트 (디자인 전체를 덮음)
                     if st.button("", key=f"v_{item['id']}_{idx}"):
-                        ss.selected_video_id = item['id']
-                        st.rerun()
+                        # TJ, 금영 등 임베디드 차단 채널 체크
+                        blocked_channels = ["TJ 노래방", "TJ Media", "금영 노래방", "KY Karaoke"]
+                        is_blocked = any(name in item['channel'] for name in blocked_channels)
+                        
+                        if is_blocked:
+                            # 새 탭에서 유튜브 원본 주소로 이동
+                            webbrowser.open(f"https://www.youtube.com/watch?v={item['id']}")
+                            st.toast(f"'{item['channel']}' 채널은 유튜브에서 직접 재생됩니다.", icon="🚀")
+                        else:
+                            # 상단 플레이어 교체
+                            ss.selected_video_id = item['id']
+                            st.rerun()
                     
                     st.markdown("</div>", unsafe_allow_html=True)
 
