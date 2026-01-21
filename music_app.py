@@ -1,13 +1,6 @@
 
 # =============================
-# INhee Hi‑Fi Music Search (Final Unified)
-# - OK 트리거 / 즉시 재생 / 더 보기(무한, API 모드)
-# - YouTube API(권장) + 스크래핑 대체(정규식 제거·안전 파싱)
-# - 썸네일/카드 높이 완전 고정(제목 길어도 카드 균일)
-# - 조회수 많은 순 기본 정렬(사이드바에서 변경 가능)
-# - 사이드바 상태/유틸 '한 번만' 렌더 (중복 제거)
-# - 모든 버튼 고유 key로 Duplicate 방지
-# - 네온+다크 UI
+# INhee Hi‑Fi Music Search (Final Unified + inv_map fix)
 # =============================
 
 # --- 최상단: import & cache 데코레이터 폴리필 ---
@@ -31,30 +24,36 @@ from typing import List, Dict, Tuple, Optional
 from platform import python_version
 import os
 
-# --- 배포 반영 상태 확인용 (필요 시 True로 바꾸면 사이드바에 보여짐) ---
+# --- 전역 상수 / 매핑 (하단에서도 안전하게 사용) ---
 SHOW_DIAGNOSTIC_BADGES = False
-VERSION = "2026-01-21-16:00 KST (final-unified)"
+VERSION = "2026-01-21-16:20 KST (final-unified+inv_map-fix)"
+
+# 정렬 옵션 매핑(사이드바용 / 역매핑)
+ORDER_LABEL_MAP = {
+    "조회수 많은 순": "viewCount",
+    "관련도 순": "relevance",
+    "업로드 날짜 순": "date",
+    "평점 순": "rating",
+}
+ORDER_INV_MAP = {v: k for k, v in ORDER_LABEL_MAP.items()}  # {"viewCount":"조회수 많은 순", ...}
 
 # ------------------------------------------------
 # 페이지/테마/CSS
 # ------------------------------------------------
 st.set_page_config(
-    page_title="INhee Hi‑Fi Music Room",
+    page_title="INhee Hi‑Fi Music Search",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 CUSTOM_CSS = """
 <style>
-/* 배경 + 기본 폰트 */
 .stApp {
   background: radial-gradient(1200px 800px at 8% 10%, #0a0f1f 0%, #080d1a 50%, #070b15 100%);
   color:#e6f1ff;
   font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Noto Sans KR", sans-serif;
 }
 h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
-
-/* 글래스 카드 래퍼 */
 .glass {
   background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
   border:1px solid rgba(0,229,255,.18);
@@ -62,8 +61,6 @@ h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
   backdrop-filter:blur(10px);
   box-shadow:0 10px 26px rgba(0,20,50,.35);
 }
-
-/* 버튼 - 더 검은 톤 */
 .stButton>button {
   background:linear-gradient(120deg,#0b0f1a,#111827);
   border:1px solid rgba(0,229,255,.25)!important;
@@ -79,8 +76,6 @@ h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
   border:1px solid rgba(0,229,255,.45)!important;
   background:linear-gradient(120deg,#0e1422,#182236);
 }
-
-/* 입력/셀렉트 - 다크 톤 */
 .stTextInput>div>div>input,
 .stSelectbox div[data-baseweb="select"]>div {
   background:rgba(255,255,255,.05)!important;
@@ -88,16 +83,12 @@ h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
   color:#e6f1ff!important;
   border-radius:10px!important;
 }
-
-/* 플레이어 프레임 */
 .video-frame {
   border-radius:14px;
   overflow:hidden;
   border:1px solid rgba(0,229,255,.18);
   box-shadow:0 16px 34px rgba(0,0,0,.35);
 }
-
-/* 카드: 높이 균일화를 위한 flex column */
 .card {
   display:flex;
   flex-direction:column;
@@ -115,33 +106,27 @@ h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
   box-shadow:0 12px 22px rgba(0,229,255,.16);
   border:1px solid rgba(0,229,255,.35);
 }
-
-/* 썸네일: 고정 높이 */
 .card img {
   width:100%;
-  height:170px;   /* 썸네일 높이 고정 */
+  height:170px;
   object-fit:cover;
   border-radius:10px;
 }
-
-/* 텍스트 컨테이너 */
 .card .textwrap {
   display:flex;
   flex-direction:column;
   margin-top:8px;
   min-height: 78px; /* 제목+메타 영역 고정 (44 + 20 + 마진) */
 }
-
-/* 제목/메타 - 줄수 제한(클램프)로 카드 높이 균일화 */
 .card .title {
   font-weight:700;
   color:#eaf7ff;
   display:-webkit-box;
-  -webkit-line-clamp:2;       /* 2줄 고정 */
+  -webkit-line-clamp:2;
   -webkit-box-orient:vertical;
   overflow:hidden;
   text-overflow:ellipsis;
-  min-height: 44px;           /* 2줄 높이 확보 */
+  min-height: 44px;
   line-height: 1.2em;
 }
 .card .meta {
@@ -149,22 +134,14 @@ h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
   color:#9dd5ff;
   margin-top:4px;
   display:-webkit-box;
-  -webkit-line-clamp:1;       /* 1줄 고정 */
+  -webkit-line-clamp:1;
   -webkit-box-orient:vertical;
   overflow:hidden;
   text-overflow:ellipsis;
-  min-height: 20px;           /* 1줄 높이 확보 */
+  min-height: 20px;
 }
-
-/* 버튼을 항상 바닥에 고정 */
-.card .btnwrap {
-  margin-top:auto;
-}
-
-/* 섹션 여백 */
+.card .btnwrap { margin-top:auto; }
 .section { padding:14px 16px; }
-
-/* 배지 */
 .badge {
   display:inline-block;
   font-size:.8rem;
@@ -201,16 +178,12 @@ VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 
 @cache_data(show_spinner=False)
 def yt_api_search(query: str, order: str = "viewCount", max_results: int = 50, page_token: Optional[str] = None):
-    """
-    order: date | rating | relevance | title | videoCount | viewCount
-    기본값 'viewCount' (조회수 많은 순)
-    """
     params = {
         "part": "snippet",
         "q": query,
         "type": "video",
         "maxResults": min(max_results, 50),
-        "order": order,
+        "order": order,  # date|rating|relevance|title|videoCount|viewCount
         "videoEmbeddable": "true",
         "safeSearch": "none",
         "regionCode": "KR",
@@ -258,7 +231,7 @@ def yt_api_search(query: str, order: str = "viewCount", max_results: int = 50, p
     return results, next_token
 
 # ------------------------------------------------
-# 스크래핑(대체): 정규식 제거, 중괄호 밸런싱으로 ytInitialData 파싱
+# 스크래핑(대체): 정규식 제거, ytInitialData 중괄호 밸런싱 파싱
 # ------------------------------------------------
 COMMON_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
@@ -376,36 +349,27 @@ if SHOW_DIAGNOSTIC_BADGES:
         st.sidebar.write(f"🔗 Commit: `{sha[:8]}`")
 
 # ------------------------------------------------
-# 사이드바: 상태/유틸/검색을 '한 번만' 렌더
+# 사이드바: 상태/유틸/검색 (한 번만 렌더)
 # ------------------------------------------------
 with st.sidebar:
     st.header("🔎 검색 설정")
 
-    # (A) 상태 배지 — 사이드바에 단 한 번만
     api_key_present = bool(YOUTUBE_API_KEY)
     st.write("🔐 YOUTUBE_API_KEY:", "✅ 감지" if api_key_present else "❌ 없음")
     st.write("🧭 모드:", "API" if api_key_present else "SCRAPING (임시)")
     st.markdown("---")
 
-    # (B) 검색 조건
     genre = st.selectbox("장르 선택", ["(선택 없음)", "국내가요", "팝송", "섹소폰", "클래식"], index=0)
     instrument = st.selectbox("악기 선택", ["(선택 없음)", "섹소폰", "드럼", "기타", "베이스"], index=0)
     direct = st.text_input("직접 입력", placeholder="예: 재즈 발라드, Beatles")
 
-    order_map = {
-        "조회수 많은 순": "viewCount",
-        "관련도 순": "relevance",
-        "업로드 날짜 순": "date",
-        "평점 순": "rating",
-    }
-    order_label = st.selectbox("정렬 기준", list(order_map.keys()), index=0)
-    ss.current_order = order_map[order_label]
+    order_label = st.selectbox("정렬 기준", list(ORDER_LABEL_MAP.keys()), index=0)
+    ss.current_order = ORDER_LABEL_MAP[order_label]
 
     grid_cols = st.slider("한 줄 카드 수", 2, 6, 4)
     batch = st.slider("한 번에 불러올 개수", 12, 60, 24, step=4)
     st.markdown("---")
 
-    # (C) 캐시/세션 유틸 — 사이드바에 딱 한 번만
     with st.expander("🛠 캐시/세션 초기화"):
         c1, c2 = st.columns(2)
         with c1:
@@ -429,7 +393,6 @@ with st.sidebar:
             st.rerun()
 
     st.markdown("---")
-    # (D) 모드 안내 + 검색 실행 버튼
     if not api_key_present:
         st.info("🔐 API 키 미설정: **스크래핑 모드(비권장)** 로 시도합니다.")
         ss.use_scraping = True
@@ -472,7 +435,7 @@ def run_search(query: str, batch_size: int):
                 st.error(f"스크래핑 실패(임시 모드): {err} / HTTP: {http_status} / HTML: {html_len}")
             ss.results.extend(results)
             ss.results = dedupe_by_video_id(ss.results)
-            ss.next_token = None  # 스크래핑은 더 보기 불가
+            ss.next_token = None
         else:
             try:
                 results, nextt = yt_api_search(query, order=ss.current_order, max_results=batch_size, page_token=None)
@@ -502,14 +465,8 @@ st.subheader("🎼 검색 결과")
 if ss.last_query and not ss.results:
     st.warning("검색 결과가 없어요. 다른 키워드로 시도해 보세요.")
 elif ss.results:
-    # 안전: 렌더 직전에도 중복 제거
     ss.results = dedupe_by_video_id(ss.results)
-
-    # 정렬 라벨 표시
-    inv_map = {"viewCount": "조회수 많은 순", "relevance": "관련도 순", "date": "업로드 날짜 순", "rating": "평점 순"}
-    order_label_current = inv_map.get(ss.current_order, ss.current_order)
-
-    st.caption(f"🔎 ‘{ss.last_query}’ — 현재 {len(ss.results)}개 로드됨 · 정렬: {order_label_current}")
+    st.caption(f"🔎 ‘{ss.last_query}’ — {len(ss.results)}개 로드됨 · 정렬: {ORDER_INV_MAP.get(ss.current_order, ss.current_order)}")
 
     cols = st.columns(grid_cols)
     for i, item in enumerate(ss.results):
@@ -519,16 +476,14 @@ elif ss.results:
             st.markdown('<div class="textwrap">', unsafe_allow_html=True)
             st.markdown(f'<div class="title">{item["title"]}</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="meta">{item["channel"]} · {item["duration"]}</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)  # textwrap
+            st.markdown('</div>', unsafe_allow_html=True)
             st.markdown('<div class="btnwrap">', unsafe_allow_html=True)
-            # 고유 key: video_id + 인덱스
             if st.button("▶ 재생", key=f"play_{item['video_id']}_{i}", use_container_width=True):
                 ss.selected_video_id = item["video_id"]
                 st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)  # btnwrap
-            st.markdown('</div>', unsafe_allow_html=True)  # card
+            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-    # 더 보기(무한) — API 모드에서만
     if ss.next_token and not ss.use_scraping:
         if st.button("＋ 더 보기", key=f"more_{len(ss.results)}_{ss.next_token or 'end'}", use_container_width=True):
             with st.spinner("추가 로딩 중…"):
@@ -549,8 +504,7 @@ else:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ------------------------------------------------
-# (선택) 본문 하단 개발자 도구 / 진단
-#   - 사이드바와 중복되지 않게 구성
+# 본문 하단 개발자 도구 / 진단 (사이드바와 중복되지 않음)
 # ------------------------------------------------
 with st.expander("🛠️ 개발자 도구 / 진단"):
     c1, c2 = st.columns(2)
@@ -566,7 +520,7 @@ with st.expander("🛠️ 개발자 도구 / 진단"):
 
     st.write("Streamlit 버전:", st.__version__)
     st.write("Python 버전:", python_version())
-    st.write("현재 정렬:", inv_map.get(ss.current_order, ss.current_order))
+    st.write("현재 정렬:", ORDER_INV_MAP.get(ss.current_order, ss.current_order))
     st.write("API 모드 여부:", "예" if not ss.use_scraping else "아니오")
 
 st.markdown("---")
