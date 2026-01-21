@@ -27,7 +27,6 @@ ss.setdefault("next_token", None)
 ss.setdefault("initialized", False)
 ss.setdefault("last_query", "섹소폰")
 
-# 사이드바 설정
 with st.sidebar:
     st.header("🔎 검색 설정")
     ui_scale = st.slider("👁 글자/UI 배율", 0.9, 1.6, 1.20, 0.05)
@@ -41,20 +40,19 @@ with st.sidebar:
     batch = st.slider("검색 개수", 12, 60, 24, step=4)
     do_search = st.button("✅ 검색 실행 (OK)")
 
-# CSS: 섬네일 어느 곳을 눌러도 클릭되도록 버튼 레이어 강제 조정
+# CSS 수정: 버튼 찌꺼기를 완벽히 제거하는 스타일
 st.markdown(f"""
 <style>
     :root {{ --ui-scale: {ui_scale}; }}
     html, .stApp {{ font-size: calc(16px * var(--ui-scale)); background: #070b15; color:#e6f1ff; }}
     
-    /* 카드 컨테이너 */
     .card-outer {{
         position: relative;
         width: 100%;
         margin-bottom: 25px;
+        overflow: hidden; /* 자식 요소가 밖으로 삐져나오지 않게 설정 */
     }}
 
-    /* 디자인 레이어: 클릭 무시 */
     .card-design {{
         position: relative;
         background: rgba(255,255,255,0.05);
@@ -62,7 +60,7 @@ st.markdown(f"""
         border-radius: 12px;
         overflow: hidden;
         z-index: 1;
-        pointer-events: none; 
+        pointer-events: none; /* 디자인 레이어 클릭 무시 */
         transition: all 0.2s;
     }}
     .card-outer:hover .card-design {{
@@ -71,25 +69,29 @@ st.markdown(f"""
         transform: translateY(-5px);
     }}
 
-    /* 실제 클릭을 받는 Streamlit 버튼 레이어: 카드 전체를 덮음 */
+    /* 버튼 찌꺼기 제거 핵심: 컨테이너 자체를 절대 좌표로 고정 */
     .card-outer div[data-testid="stButton"] {{
         position: absolute !important;
         top: 0 !important;
         left: 0 !important;
         width: 100% !important;
         height: 100% !important;
+        padding: 0 !important;
+        margin: 0 !important;
         z-index: 10 !important;
     }}
     
+    /* 버튼 내부의 공백 및 테두리 초기화 */
     .card-outer div[data-testid="stButton"] > button {{
         width: 100% !important;
         height: 100% !important;
         background: transparent !important;
         border: none !important;
         color: transparent !important;
+        box-shadow: none !important;
         padding: 0 !important;
         margin: 0 !important;
-        cursor: pointer !important;
+        display: block !important;
     }}
 
     .view-badge {{
@@ -141,7 +143,6 @@ def build_query(g, i, d):
     if i != "(선택 없음)": parts.append(i)
     return " ".join(parts).strip()
 
-# 로직 실행
 if not ss.initialized:
     res, nt = search_youtube("섹소폰", "relevance", 24)
     ss.results, ss.next_token, ss.initialized = res, nt, True
@@ -165,7 +166,7 @@ if ss.results:
             if idx < len(ss.results):
                 item = ss.results[idx]
                 with col:
-                    # 클릭 가능한 카드 구조
+                    # 마크다운 시작
                     st.markdown(f"""
                     <div class="card-outer">
                         <div class="card-design">
@@ -176,15 +177,12 @@ if ss.results:
                         </div>
                     """, unsafe_allow_html=True)
                     
-                    # 투명 버튼: 섬네일 어느 곳을 눌러도 작동
-                    if st.button("", key=f"btn_{item['id']}_{idx}"):
-                        # 재생 불가 채널(TJ, 금영) 체크
+                    # 투명 버튼 (절대 위치로 디자인 위로 올라감)
+                    if st.button("", key=f"v_btn_{item['id']}_{idx}"):
                         blocked_list = ["TJ 노래방", "TJ Media", "금영 노래방", "KY Karaoke"]
                         if any(name in item['channel'] for name in blocked_list):
-                            # 직접 유튜브로 이동
                             webbrowser.open(f"https://www.youtube.com/watch?v={item['id']}")
                         else:
-                            # 상단 플레이어 교체
                             ss.selected_video_id = item['id']
                             st.rerun()
                     
