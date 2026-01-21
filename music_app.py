@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import List, Dict, Optional
 
 # =============================
-# 1. 앱 설정 및 스타일
+# 1. 앱 설정 및 스타일 (UI 레이아웃)
 # =============================
 st.set_page_config(page_title="INhee Hi-Fi Music Search", layout="wide")
 
@@ -27,7 +27,7 @@ ss.setdefault("next_token", None)
 ss.setdefault("initialized", False)
 ss.setdefault("last_query", "섹소폰")
 
-# 사이드바 설정 (기존 로직 유지)
+# 사이드바 설정 (기존 로직 그대로 유지)
 with st.sidebar:
     st.header("🔎 검색 설정")
     ui_scale = st.slider("👁 글자/UI 배율", 0.9, 1.6, 1.20, 0.05)
@@ -39,15 +39,16 @@ with st.sidebar:
     order_label = st.selectbox("정렬 기준", list(order_map.keys()), index=0)
     grid_cols = st.slider("한 줄 카드 수", 2, 6, 4)
     batch = st.slider("검색 개수", 12, 60, 24, step=4)
+    # 삭제되었던 검색 실행 버튼 복구
     do_search = st.button("✅ 검색 실행 (OK)")
 
-# CSS: 카드 배치 정렬 및 "진짜" 클릭 영역 확보
+# CSS: 카드 배치 정렬 및 "섬네일 클릭" 활성화
 st.markdown(f"""
 <style>
     :root {{ --ui-scale: {ui_scale}; }}
     html, .stApp {{ font-size: calc(16px * var(--ui-scale)); background: #070b15; color:#e6f1ff; }}
     
-    /* 카드 전체 레이아웃 */
+    /* 카드 컨테이너 스타일 */
     .video-card {{
         position: relative;
         background: rgba(255,255,255,0.05);
@@ -57,6 +58,7 @@ st.markdown(f"""
         transition: transform 0.2s, border-color 0.2s;
         height: 100%;
         overflow: hidden;
+        z-index: 1;
     }}
     .video-card:hover {{
         border-color: #00e5ff;
@@ -64,12 +66,12 @@ st.markdown(f"""
         background: rgba(255,255,255,0.1);
     }}
 
-    /* 썸네일 위 조회수 배지 */
+    /* 조회수 배지 */
     .view-badge {{
         position: absolute;
         top: 8px;
         right: 8px;
-        background: rgba(0, 0, 0, 0.7);
+        background: rgba(0, 0, 0, 0.75);
         color: #00e5ff;
         padding: 2px 8px;
         border-radius: 4px;
@@ -100,21 +102,34 @@ st.markdown(f"""
         line-height: 1.2;
     }}
 
-    /* 버튼을 카드 전체에 투명하게 덮는 핵심 기술 */
-    div[data-testid="stButton"] button {{
-        position: absolute;
-        top: 0; left: 0;
-        width: 100%; height: 100%;
+    /* 핵심: 버튼을 투명하게 만들어 카드 전체를 덮음 */
+    div[data-testid="stButton"] > button {{
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
         background: transparent !important;
         border: none !important;
         color: transparent !important;
-        z-index: 10;
-        cursor: pointer;
+        z-index: 100 !important; /* 버튼이 가장 위로 오게 하여 클릭 가로채기 */
+        cursor: pointer !important;
+        margin: 0 !important;
     }}
+    
+    /* 사이드바 및 더보기 버튼은 정상적으로 보이게 예외 처리 */
+    section[data-testid="stSidebar"] div[data-testid="stButton"] > button,
+    .more-btn-container div[data-testid="stButton"] > button {
+        position: relative !important;
+        background: inherit !important;
+        color: inherit !important;
+        border: 1px solid rgba(0,229,255,0.5) !important;
+        z-index: 1 !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# 조회수 포맷팅 함수
+# 조회수 포맷팅
 def format_views(count):
     if not count: return "0"
     c = int(count)
@@ -122,12 +137,11 @@ def format_views(count):
     if c >= 1000: return f"{c/1000:.1f}천"
     return str(c)
 
-# 유튜브 검색 (조회수 정보를 가져오기 위해 statistics 추가)
+# 검색 함수 (조회수 포함 정보 추출)
 @st.cache_data(ttl=600)
 def search_youtube(query, order, limit, page_token=None):
     if not YOUTUBE_API_KEY: return [], None
     try:
-        # 1. 먼저 검색 실행
         search_url = "https://www.googleapis.com/youtube/v3/search"
         s_params = {"part": "snippet", "q": query, "type": "video", "maxResults": limit, "order": order, "key": YOUTUBE_API_KEY, "pageToken": page_token}
         s_res = requests.get(search_url, params=s_params).json()
@@ -135,7 +149,6 @@ def search_youtube(query, order, limit, page_token=None):
         vids = [it['id']['videoId'] for it in s_res.get("items", [])]
         if not vids: return [], None
 
-        # 2. 조회수를 가져오기 위해 videos 엔드포인트 호출
         video_url = "https://www.googleapis.com/youtube/v3/videos"
         v_params = {"part": "snippet,statistics", "id": ",".join(vids), "key": YOUTUBE_API_KEY}
         v_res = requests.get(video_url, params=v_params).json()
@@ -153,7 +166,6 @@ def search_youtube(query, order, limit, page_token=None):
         return results, s_res.get("nextPageToken")
     except: return [], None
 
-# 검색어 생성 로직 유지
 def build_query(g, i, d):
     d_clean = d.strip()
     if g == "MR/노래방": return f'"{d_clean}" 노래방' if d_clean else "인기 노래방 반주"
@@ -162,7 +174,7 @@ def build_query(g, i, d):
     if i != "(선택 없음)": parts.append(i)
     return " ".join(parts).strip()
 
-# 초기화 및 검색 제어
+# 로직 실행
 if not ss.initialized:
     res, nt = search_youtube("섹소폰", "relevance", 24)
     ss.results, ss.next_token, ss.initialized = res, nt, True
@@ -177,16 +189,17 @@ if do_search:
 st.title("🎵 INhee Hi-Fi Music Search")
 st.video(f"https://www.youtube.com/watch?v={ss.selected_video_id}")
 
-# 결과 그리드
+# 결과 그리드 배치
 if ss.results:
     st.subheader(f"🎼 '{ss.last_query}' 검색 결과")
     for i in range(0, len(ss.results), grid_cols):
         cols = st.columns(grid_cols)
         for j, col in enumerate(cols):
-            if i + j < len(ss.results):
-                item = ss.results[i + j]
+            idx = i + j
+            if idx < len(ss.results):
+                item = ss.results[idx]
                 with col:
-                    # 카드 전체를 클릭 가능하게 만드는 컨테이너
+                    # 카드 컨테이너 (디자인)
                     st.markdown(f"""
                     <div class="video-card">
                         <div class="view-badge">👁 {item['views']}</div>
@@ -199,15 +212,17 @@ if ss.results:
                     </div>
                     """, unsafe_allow_html=True)
                     
-                    # 카드 위에 투명하게 덮이는 실제 버튼
-                    if st.button("", key=f"btn_{item['id']}_{i+j}"):
+                    # 카드 위에 투명하게 덮이는 실제 클릭 버튼
+                    if st.button("", key=f"play_{item['id']}_{idx}"):
                         ss.selected_video_id = item['id']
                         st.rerun()
 
-    # 더 보기 버튼
+    # 더 보기 버튼 (전용 컨테이너로 스타일 예외처리)
     if ss.next_token:
-        if st.button("＋ 결과 더 보기", use_container_width=True):
+        st.markdown('<div class="more-btn-container">', unsafe_allow_html=True)
+        if st.button("＋ 결과 더 보기 (더 많은 곡 찾기)", use_container_width=True):
             new_res, new_token = search_youtube(ss.last_query, order_map[order_label], batch, page_token=ss.next_token)
             ss.results.extend(new_res)
             ss.next_token = new_token
             st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
