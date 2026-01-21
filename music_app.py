@@ -1,37 +1,53 @@
 import streamlit as st
+import urllib.parse
 
-# 1. 디자인 (사용자님의 예쁜 스타일 그대로 유지)
-st.set_page_config(page_title="INhee Hi-Fi", layout="wide")
+# 1. 페이지 설정 및 디자인
+st.set_page_config(page_title="INhee Hi-Fi Music Search", layout="wide")
 st.markdown("""
     <style>
-    .main { background-color: #1a1a2e; color: white; }
-    h1 { color: #00d4ff; text-align: center; }
+    .main { background-color: #0e1117; color: white; }
+    .stTextInput>div>div>input { background-color: #262730; color: white; border: 1px solid #00d4ff; }
+    .music-card { border: 1px solid #333; padding: 10px; border-radius: 10px; margin-bottom: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🎵 INhee Hi-Fi 뮤직룸")
+st.title("🔍 INhee 나만의 유튜브 음악 검색")
 
-# 2. 사이드바 메뉴 (여기서 고르면 아래 'video_url'이 바뀝니다)
-with st.sidebar:
-    st.header("음악 카테고리")
-    category = st.selectbox("음악 장르를 선택하세요", ["국내가요", "팝송", "섹소폰", "클래식"])
+# 2. 검색창 구성
+search_query = st.text_input("가수나 노래 제목을 입력하세요 (예: 비틀즈, 섹소폰 재즈)", "")
 
-# 3. 핵심 로직: 선택한 장르에 따라 주소를 할당함
-# 사용자님이 원하시는 영상 주소들을 여기에 하나씩 넣으시면 됩니다.
-if category == "국내가요":
-    video_url = "https://www.youtube.com/embed/9N9U_o7-H-k" # 예시: 김광석
-elif category == "팝송":
-    video_url = "https://www.youtube.com/embed/S2Cti1277AM" # 예시: 비틀즈
-elif category == "섹소폰":
-    video_url = "https://www.youtube.com/embed/LK0sKS6l2V4" # 사용자님이 올리신 그 영상
-else:
-    video_url = "https://www.youtube.com/embed/jgpJVI3t4mE" # 클래식
-
-# 4. 화면 표시
-st.subheader(f"📺 현재 [{category}] 모드로 감상 중입니다.")
-st.video(video_url)
-
-# 5. 검색창 (글자를 쓰고 엔터를 치면 안내 메시지가 뜹니다)
-search_query = st.text_input("🔍 검색창에 가수 이름을 입력해 보세요")
 if search_query:
-    st.warning(f"'{search_query}'에 대한 자동 검색 기능은 현재 준비 중입니다. 위 메뉴를 이용해 주세요!")
+    # 유튜브 검색 URL 생성
+    encoded_query = urllib.parse.quote(search_query)
+    search_url = f"https://www.youtube.com/results?search_query={encoded_query}"
+    
+    st.subheader(f"'{search_query}'에 대한 검색 결과입니다.")
+    
+    # 3. 검색 결과 레이아웃 (섬네일처럼 보이기 위한 구성)
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.info("💡 아래 링크를 클릭하면 유튜브 검색 결과로 바로 연결됩니다.")
+        # 섬네일과 링크를 시각적으로 표시
+        st.markdown(f"""
+            <div style="background-color: #262730; padding: 20px; border-radius: 15px; border-left: 5px solid #ff0000;">
+                <h3 style="margin: 0;">📺 유튜브에서 바로 보기</h3>
+                <p style="color: #aaa;">클릭하시면 {search_query}의 최신 영상 리스트로 이동합니다.</p>
+                <a href="{search_url}" target="_blank" style="background-color: #ff0000; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                    유튜브 검색 결과 열기
+                </a>
+            </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.write("🎹 **추천 카테고리**")
+        if st.button("🎷 섹소폰 베스트"):
+            st.video("https://www.youtube.com/watch?v=LK0sKS6l2V4")
+        if st.button("🎸 7080 가요"):
+            st.video("https://www.youtube.com/watch?v=9N9U_o7-H-k")
+
+else:
+    # 검색 전 초기 화면 (사용자님이 좋아하는 영상 섬네일 배치 가능)
+    st.write("---")
+    st.write("아래는 추천 영상입니다.")
+    st.video("https://www.youtube.com/watch?v=LK0sKS6l2V4") # 그 섹소폰 영상
