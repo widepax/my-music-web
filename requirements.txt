@@ -1,4 +1,3 @@
 streamlit
-beautifulsoup4
 requests
 #이인희 뮤직 룸
