@@ -159,7 +159,7 @@ if do_search:
     ss.results, ss.next_token = res, nt
 
 # 메인 UI
-st.title("🎵 INhee Hi-Fi Music Search")
+st.title("🎵 INhee Hi-Fi Music Room")
 st.video(f"https://www.youtube.com/watch?v={ss.selected_video_id}")
 
 if ss.results:
