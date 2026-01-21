@@ -1,67 +1,78 @@
 import os
 import requests
 import streamlit as st
-import streamlit.components.v1 as components
 
 # =============================
-# 1. 앱 설정 및 스타일
+# 1. 앱 설정 및 스타일 (UI 복구)
 # =============================
 st.set_page_config(page_title="INhee Hi-Fi Music Search", layout="wide")
 
 def load_api_key():
-    # 환경변수 우선, 없으면 secrets에서 가져오되 에러 방지를 위해 get() 사용
+    # 에러 방지를 위해 안전하게 키 로드
     key = os.getenv("YOUTUBE_API_KEY")
     if not key:
-        try:
-            key = st.secrets.get("YOUTUBE_API_KEY")
-        except:
-            key = None
+        try: key = st.secrets.get("YOUTUBE_API_KEY")
+        except: key = None
     return key
 
 YOUTUBE_API_KEY = load_api_key()
 
-# 세션 상태 관리 (검색 결과 유지 및 무한 루프 방지)
+# 세션 상태 (검색 결과 및 현재 영상 고정)
 if "results" not in st.session_state:
     st.session_state.results = []
+if "current_video_id" not in st.session_state:
+    st.session_state.current_video_id = "LK0sKS6l2V4"
 if "last_query" not in st.session_state:
     st.session_state.last_query = ""
 
-# [핵심] 깜빡임 없는 재생을 위한 JS 브릿지
-components.html(
-    """
-    <script>
-    window.parent.document.addEventListener('playVideoNow', function(e) {
-        const vId = e.detail.videoId;
-        const iframes = window.parent.document.querySelectorAll('iframe');
-        for (let f of iframes) {
-            if (f.src.includes('youtube.com/embed')) {
-                f.src = 'https://www.youtube.com/embed/' + vId + '?autoplay=1';
-                f.scrollIntoView({behavior: "smooth"});
-                break;
-            }
-        }
-    });
-    </script>
-    """,
-    height=0,
-)
-
+# CSS: 찌꺼기 상자를 유발하는 요소를 완전히 제거하고 텍스트 겹침 수정
 st.markdown("""
 <style>
+    html, .stApp { background: #070b15; color:#e6f1ff; }
+    
+    /* 검색 결과 카드 디자인 */
     .music-card {
-        cursor: pointer; background: rgba(255,255,255,0.05);
-        border: 1px solid rgba(0,229,255,0.2); border-radius: 12px;
-        overflow: hidden; margin-bottom: 20px; transition: 0.2s;
+        cursor: pointer;
+        background: rgba(255,255,255,0.05);
+        border: 1px solid rgba(0,229,255,0.2);
+        border-radius: 12px;
+        overflow: hidden;
+        margin-bottom: 20px;
+        transition: 0.2s;
     }
-    .music-card:hover { border-color: #00e5ff; transform: translateY(-5px); background: rgba(255,255,255,0.1); }
-    .thumb-img { width: 100%; aspect-ratio: 16/9; object-fit: cover; pointer-events: none; }
-    .v-title { padding: 10px 10px 2px 10px; font-size: 0.85rem; font-weight: bold; color: #fff; height: 3.2em; overflow: hidden; pointer-events: none; }
-    .v-channel { padding: 0 10px 10px 10px; font-size: 0.75rem; color: #9dd5ff; pointer-events: none; }
+    .music-card:hover { 
+        border-color: #00e5ff; 
+        transform: translateY(-5px); 
+        background: rgba(255,255,255,0.1); 
+    }
+    .thumb-img { width: 100%; aspect-ratio: 16/9; object-fit: cover; }
+    
+    /* 텍스트 겹침 방지 및 가독성 향상 */
+    .v-title { 
+        padding: 10px 10px 2px 10px; 
+        font-size: 0.9rem; 
+        font-weight: bold; 
+        color: #fff; 
+        line-height: 1.4;
+        height: 2.8em;
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+    }
+    .v-channel { 
+        padding: 0 10px 12px 10px; 
+        font-size: 0.75rem; 
+        color: #9dd5ff; 
+    }
+    
+    /* 불필요한 Streamlit 기본 요소(찌꺼기) 강제 숨김 */
+    div[data-testid="stVerticalBlock"] > div[style*="border: none"] { display: none !important; }
 </style>
 """, unsafe_allow_html=True)
 
 # =============================
-# 2. 사이드바 검색 설정
+# 2. 사이드바 및 검색 로직
 # =============================
 with st.sidebar:
     st.header("🔎 검색 설정")
@@ -69,24 +80,8 @@ with st.sidebar:
     direct = st.text_input("곡 제목 입력", placeholder="곡명을 입력하세요")
     do_search = st.button("✅ 검색 실행 (OK)", type="primary", use_container_width=True)
 
-def build_youtube_query(g, d):
-    d_clean = d.strip()
-    exclude = "-TJ -금영 -KY -Media -KaraokeKpop"
-    
-    # 요청하신 키워드 조합 로직
-    keywords = "(노래방 OR MR OR Instrument OR Karaoke OR Inst)"
-    
-    if g == "MR (TJ/KY제외)":
-        return f'"{d_clean}" {keywords} {exclude}'
-    elif g == "MR/노래방":
-        return f'"{d_clean}" {keywords}'
-    else:
-        return f'"{d_clean}" {g}'
-
 def fetch_videos(q):
-    if not YOUTUBE_API_KEY:
-        st.error("API 키가 없습니다. secrets.toml 파일을 확인하세요.")
-        return []
+    if not YOUTUBE_API_KEY: return []
     url = "https://www.googleapis.com/youtube/v3/search"
     try:
         res = requests.get(url, params={
@@ -101,49 +96,58 @@ def fetch_videos(q):
         
         output = []
         for it in v_res.get("items", []):
-            count = int(it['statistics'].get('viewCount', 0))
-            views = f"{count//10000}만" if count >= 10000 else f"{count}회"
             output.append({
-                "id": it['id'], "title": it['snippet']['title'],
+                "id": it['id'],
+                "title": it['snippet']['title'],
                 "channel": it['snippet']['channelTitle'],
-                "thumb": it['snippet']['thumbnails']['medium']['url'], "views": views
+                "thumb": it['snippet']['thumbnails']['medium']['url']
             })
         return output
     except: return []
 
-# 검색 실행 로직
 if do_search:
-    query = build_youtube_query(genre, direct)
+    # 제외 키워드 반영 로직
+    keywords = "(노래방 OR MR OR Instrument OR Karaoke OR Inst)"
+    exclude = "-TJ -금영 -KY -Media" if "제외" in genre else ""
+    query = f'"{direct}" {keywords if "MR" in genre else genre} {exclude}'
+    
     st.session_state.results = fetch_videos(query)
-    st.session_state.last_query = query
+    st.session_state.last_query = direct
 
 # =============================
-# 3. 메인 화면 구성
+# 3. 메인 화면 (플레이어 및 결과)
 # =============================
 st.title("🎵 INhee Hi-Fi Music Search")
 
-# 상단 플레이어 (기본 영상)
-st.video("https://www.youtube.com/watch?v=LK0sKS6l2V4")
+# [수정] 깜빡임을 최소화하기 위해 플레이어를 세션 상태와 연동
+st.video(f"https://www.youtube.com/watch?v={st.session_state.current_video_id}")
 
 if st.session_state.results:
-    st.subheader(f"🎼 검색 결과: {direct}")
+    st.subheader(f"🎼 '{st.session_state.last_query}' 검색 결과")
+    
+    # 4열 그리드 레이아웃
     cols = st.columns(4)
     for idx, item in enumerate(st.session_state.results):
         with cols[idx % 4]:
-            # TJ, 금영 채널 판별
-            blocked = ["TJ", "금영", "KY", "Media"]
-            is_blocked = any(name in item['channel'] for name in blocked)
+            # TJ/KY 채널 판별
+            is_blocked = any(name in item['channel'] for name in ["TJ", "금영", "KY", "Media"])
             
-            # [수정] 클릭 로직: 차단 채널은 새창 리다이렉션, 일반은 즉시 재생
-            if is_blocked:
-                click_action = f"window.open('https://www.youtube.com/watch?v={item['id']}', '_blank')"
-            else:
-                click_action = f"window.parent.document.dispatchEvent(new CustomEvent('playVideoNow', {{detail: {{videoId: '{item['id']}'}}}}))"
-
+            # 카드 렌더링
             st.markdown(f"""
-                <div class="music-card" onclick="{click_action}">
+                <div class="music-card">
                     <img src="{item['thumb']}" class="thumb-img">
                     <div class="v-title">{item['title']}</div>
-                    <div class="v-channel">{item['channel']} | 👁 {item['views']}</div>
+                    <div class="v-channel">{item['channel']}</div>
                 </div>
             """, unsafe_allow_html=True)
+            
+            # [핵심] 찌꺼기 없는 투명 버튼으로 클릭 처리
+            # 버튼 클릭 시에만 세션 상태를 바꿔서 검색 결과는 유지하고 영상만 교체
+            if st.button("재생", key=f"btn_{item['id']}", use_container_width=True):
+                if is_blocked:
+                    # 차단 채널은 새창 열기
+                    import webbrowser
+                    webbrowser.open(f"https://www.youtube.com/watch?v={item['id']}")
+                else:
+                    st.session_state.current_video_id = item['id']
+                    st.rerun()
