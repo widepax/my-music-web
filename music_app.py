@@ -1,7 +1,6 @@
 import os
 import requests
 import streamlit as st
-import webbrowser
 from typing import List, Dict, Optional
 
 # =============================
@@ -27,6 +26,13 @@ ss.setdefault("next_token", None)
 ss.setdefault("initialized", False)
 ss.setdefault("last_query", "섹소폰")
 
+# 쿼리 파라미터를 이용한 재생 전환 로직 (가장 확실한 방식)
+query_params = st.query_params
+if "v" in query_params:
+    ss.selected_video_id = query_params["v"]
+    # 파라미터 초기화 (무한 루프 방지)
+    st.query_params.clear()
+
 with st.sidebar:
     st.header("🔎 검색 설정")
     ui_scale = st.slider("👁 글자/UI 배율", 0.9, 1.6, 1.20, 0.05)
@@ -40,58 +46,32 @@ with st.sidebar:
     batch = st.slider("검색 개수", 12, 60, 24, step=4)
     do_search = st.button("✅ 검색 실행 (OK)")
 
-# CSS 수정: 버튼 찌꺼기를 완벽히 제거하는 스타일
+# CSS: 버튼 찌꺼기를 원천 차단하기 위해 <a> 태그 기반 카드 설계
 st.markdown(f"""
 <style>
     :root {{ --ui-scale: {ui_scale}; }}
     html, .stApp {{ font-size: calc(16px * var(--ui-scale)); background: #070b15; color:#e6f1ff; }}
     
-    .card-outer {{
-        position: relative;
-        width: 100%;
-        margin-bottom: 25px;
-        overflow: hidden; /* 자식 요소가 밖으로 삐져나오지 않게 설정 */
-    }}
-
-    .card-design {{
+    /* 카드 전체를 클릭 가능한 링크로 설정 */
+    .music-card {{
+        display: block;
+        text-decoration: none !important;
+        color: inherit !important;
         position: relative;
         background: rgba(255,255,255,0.05);
         border: 1px solid rgba(0,229,255,0.2);
         border-radius: 12px;
         overflow: hidden;
+        margin-bottom: 20px;
+        transition: all 0.2s ease-in-out;
         z-index: 1;
-        pointer-events: none; /* 디자인 레이어 클릭 무시 */
-        transition: all 0.2s;
     }}
-    .card-outer:hover .card-design {{
+    
+    .music-card:hover {{
         border-color: #00e5ff;
         background: rgba(255,255,255,0.1);
         transform: translateY(-5px);
-    }}
-
-    /* 버튼 찌꺼기 제거 핵심: 컨테이너 자체를 절대 좌표로 고정 */
-    .card-outer div[data-testid="stButton"] {{
-        position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100% !important;
-        height: 100% !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        z-index: 10 !important;
-    }}
-    
-    /* 버튼 내부의 공백 및 테두리 초기화 */
-    .card-outer div[data-testid="stButton"] > button {{
-        width: 100% !important;
-        height: 100% !important;
-        background: transparent !important;
-        border: none !important;
-        color: transparent !important;
-        box-shadow: none !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        display: block !important;
+        box-shadow: 0 10px 20px rgba(0,0,0,0.3);
     }}
 
     .view-badge {{
@@ -100,11 +80,14 @@ st.markdown(f"""
         padding: 2px 8px; border-radius: 4px;
         font-size: 0.75rem; font-weight: bold;
     }}
-    .thumb-img {{ width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }}
+    .thumb-img {{ width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; }}
     .v-title {{
-        padding: 12px; font-size: 0.9rem; font-weight: 600; color: #eaf7ff;
+        padding: 12px 12px 2px 12px; font-size: 0.9rem; font-weight: 600; color: #eaf7ff;
         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
         overflow: hidden; height: 2.4em; line-height: 1.2;
+    }}
+    .v-channel {{
+        padding: 0 12px 12px 12px; color: #9dd5ff; font-size: 0.75rem;
     }}
 </style>
 """, unsafe_allow_html=True)
@@ -165,30 +148,28 @@ if ss.results:
             idx = i + j
             if idx < len(ss.results):
                 item = ss.results[idx]
+                
+                # 재생 불가 채널 판별
+                blocked_list = ["TJ 노래방", "TJ Media", "금영 노래방", "KY Karaoke"]
+                is_blocked = any(name in item['channel'] for name in blocked_list)
+                
+                # 핵심 수정: Streamlit 버튼을 완전히 제거하고 HTML <a> 태그 사용
+                # 일반 채널은 현재 페이지 리로드(?v=ID), 차단 채널은 유튜브 새창 열기
+                target_url = f"https://www.youtube.com/watch?v={item['id']}" if is_blocked else f"./?v={item['id']}"
+                target_attr = 'target="_blank"' if is_blocked else 'target="_self"'
+                
                 with col:
-                    # 마크다운 시작
                     st.markdown(f"""
-                    <div class="card-outer">
-                        <div class="card-design">
-                            <div class="view-badge">👁 {item['views']}</div>
-                            <img src="{item['thumb']}" class="thumb-img">
-                            <div class="v-title">{item['title']}</div>
-                            <div style="padding:0 12px 12px 12px; color:#9dd5ff; font-size:0.75rem;">{item['channel']}</div>
-                        </div>
+                    <a href="{target_url}" {target_attr} class="music-card">
+                        <div class="view-badge">👁 {item['views']}</div>
+                        <img src="{item['thumb']}" class="thumb-img">
+                        <div class="v-title">{item['title']}</div>
+                        <div class="v-channel">{item['channel']}</div>
+                    </a>
                     """, unsafe_allow_html=True)
-                    
-                    # 투명 버튼 (절대 위치로 디자인 위로 올라감)
-                    if st.button("", key=f"v_btn_{item['id']}_{idx}"):
-                        blocked_list = ["TJ 노래방", "TJ Media", "금영 노래방", "KY Karaoke"]
-                        if any(name in item['channel'] for name in blocked_list):
-                            webbrowser.open(f"https://www.youtube.com/watch?v={item['id']}")
-                        else:
-                            ss.selected_video_id = item['id']
-                            st.rerun()
-                    
-                    st.markdown("</div>", unsafe_allow_html=True)
 
     if ss.next_token:
+        # 이 버튼은 카드 외부에 있으므로 유지
         if st.button("＋ 결과 더 보기", use_container_width=True):
             new_res, new_token = search_youtube(ss.last_query, order_map[order_label], batch, page_token=ss.next_token)
             ss.results.extend(new_res)
