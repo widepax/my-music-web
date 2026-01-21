@@ -3,9 +3,11 @@
 # INhee Hi‑Fi Music Search (Unified)
 # - OK 버튼 트리거
 # - YouTube API (권장) + 스크래핑 대체
-# - 정규식 제거(괄호 불균형 방지)
+# - 정규식 제거(괄호 불균형 방지) 스크래핑
 # - 캐시 데코레이터 폴리필 + 진단/캐시 클리어
-# - 세련된 네온/글래스모피즘 UI
+# - 썸네일 그리드, 더 보기(무제한), 즉시 재생
+# - StreamlitDuplicateElementKey 방지(고유 key/중복 제거)
+# - 세련된 네온/글래스 UI
 # =============================
 
 # --- 반드시 최상단: import & cache 데코레이터 폴리필 ---
@@ -27,6 +29,10 @@ import json
 import re
 from typing import List, Dict, Tuple, Optional
 from platform import python_version
+import os
+
+# --- 배포 반영 상태 확인용 버전 배너(매 커밋 시 숫자 변경 권장) ---
+VERSION = "2026-01-21-13:45 KST (unified+dedupe+unique_keys)"
 
 # ------------------------------------------------
 # 페이지/테마/CSS
@@ -224,6 +230,20 @@ def scrape_youtube_search(query: str, max_items: int = 50) -> Tuple[List[Dict], 
         return [], None, None, str(e)
 
 # ------------------------------------------------
+# 중복 제거 유틸 (video_id 기준)
+# ------------------------------------------------
+def dedupe_by_video_id(items: List[Dict]) -> List[Dict]:
+    seen = set()
+    out = []
+    for it in items:
+        vid = it.get("video_id")
+        if not vid or vid in seen:
+            continue
+        seen.add(vid)
+        out.append(it)
+    return out
+
+# ------------------------------------------------
 # 세션 상태 초기화
 # ------------------------------------------------
 ss = st.session_state
@@ -232,6 +252,41 @@ ss.setdefault("last_query", "")
 ss.setdefault("results", [])
 ss.setdefault("next_token", None)
 ss.setdefault("use_scraping", False)
+
+# ------------------------------------------------
+# 사이드바: 버전/상태/개발자 도구(혼선 방지)
+# ------------------------------------------------
+st.sidebar.write(f"🔖 App Version: `{VERSION}`")
+st.sidebar.write(f"📄 Running file: `{__file__}`")
+sha = os.environ.get("STREAMLIT_COMMIT_HASH") or os.environ.get("GITHUB_SHA")
+if sha:
+    st.sidebar.write(f"🔗 Commit: `{sha[:8]}`")
+
+api_key_present = bool(YOUTUBE_API_KEY)
+st.sidebar.write("🔐 YOUTUBE_API_KEY:", "✅ 감지" if api_key_present else "❌ 없음")
+st.sidebar.write("🧭 모드:", "API" if api_key_present else "SCRAPING (임시)")
+
+with st.sidebar.expander("🛠 캐시/세션 초기화"):
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🧹 cache_data 지우기"):
+            try:
+                st.cache_data.clear()
+            except Exception:
+                try:
+                    st.experimental_memo.clear()
+                    st.experimental_singleton.clear()
+                except Exception:
+                    pass
+            st.success("cache_data cleared")
+    with c2:
+        if st.button("🔄 앱 재실행"):
+            st.rerun()
+    if st.button("🧼 세션 상태 초기화"):
+        for k in ["results", "next_token", "last_query"]:
+            st.session_state.pop(k, None)
+        st.success("세션 상태 초기화 완료")
+        st.rerun()
 
 # ------------------------------------------------
 # 상단 타이틀
@@ -244,7 +299,7 @@ st.title("🎵 INhee Hi‑Fi Music Search")
 with st.sidebar:
     st.header("🔎 검색 설정")
 
-    # 요구사항에 맞춘 옵션 축소
+    # 요구사항에 맞춘 옵션
     genre = st.selectbox("장르 선택", ["(선택 없음)", "국내가요", "팝송", "섹소폰", "클래식"], index=0)
     instrument = st.selectbox("악기 선택", ["(선택 없음)", "섹소폰", "드럼", "기타", "베이스"], index=0)
     direct = st.text_input("직접 입력", placeholder="예: 재즈 발라드, Beatles")
@@ -254,7 +309,7 @@ with st.sidebar:
     batch = st.slider("한 번에 불러올 개수", 12, 60, 24, step=4)
 
     st.markdown("---")
-    if not YOUTUBE_API_KEY:
+    if not api_key_present:
         st.info("🔐 API 키 미설정: **스크래핑 모드(비권장)** 로 시도합니다.")
         ss.use_scraping = True
     else:
@@ -291,16 +346,16 @@ def run_search(query: str, batch_size: int):
         if ss.use_scraping:
             results, http_status, html_len, err = scrape_youtube_search(query, max_items=batch_size)
             if err:
-                st.error(f"스크래핑 실패: {err}")
-            else:
-                st.caption(f"스크래핑 HTTP {http_status}, HTML {html_len} chars")
+                st.error(f"스크래핑 실패(임시 모드): {err} / HTTP: {http_status} / HTML: {html_len}")
             ss.results.extend(results)
+            ss.results = dedupe_by_video_id(ss.results)
             ss.next_token = None  # 스크래핑은 더 보기 불가
         else:
             # API 모드
             try:
                 results, nextt = yt_api_search(query, max_results=batch_size, page_token=None)
                 ss.results.extend(results)
+                ss.results = dedupe_by_video_id(ss.results)
                 ss.next_token = nextt
             except requests.HTTPError as e:
                 try:
@@ -317,7 +372,7 @@ if do_search:
         run_search(q, batch)
 
 # ------------------------------------------------
-# 결과 출력: 썸네일 그리드 + 더 보기(무제한, API 모드)
+# 결과 출력: 썸네일 그리드 + 더 보기(무한, API 모드)
 # ------------------------------------------------
 st.markdown('<div class="section glass">', unsafe_allow_html=True)
 st.subheader("🎼 검색 결과")
@@ -325,6 +380,9 @@ st.subheader("🎼 검색 결과")
 if ss.last_query and not ss.results:
     st.warning("검색 결과가 없어요. 다른 키워드로 시도해 보세요.")
 elif ss.results:
+    # 렌더 직전 한 번 더 중복 제거(안전)
+    ss.results = dedupe_by_video_id(ss.results)
+
     st.caption(f"🔎 ‘{ss.last_query}’ — 현재 {len(ss.results)}개 로드됨")
     cols = st.columns(grid_cols)
     for i, item in enumerate(ss.results):
@@ -333,18 +391,25 @@ elif ss.results:
             st.image(item["thumbnail"], use_container_width=True)
             st.markdown(f'<div class="title">{item["title"]}</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="meta">{item["channel"]} · {item["duration"]}</div>', unsafe_allow_html=True)
-            if st.button("▶ 재생", key=f"play_{item['video_id']}", use_container_width=True):
+            # 🔑 key를 고유하게: video_id + 인덱스(중복 방지)
+            if st.button("▶ 재생", key=f"play_{item['video_id']}_{i}", use_container_width=True):
                 ss.selected_video_id = item["video_id"]
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
 
     # 더 보기(썸네일 제한 없음) — API 모드에서 무한 로딩
     if ss.next_token and not ss.use_scraping:
-        if st.button("＋ 더 보기", use_container_width=True):
+        if st.button("＋ 더 보기", key=f"more_{len(ss.results)}_{ss.next_token or 'end'}", use_container_width=True):
             with st.spinner("추가 로딩 중…"):
                 new, new_token = yt_api_search(ss.last_query, max_results=batch, page_token=ss.next_token)
+                # 새 결과 먼저 중복 제거
+                new = dedupe_by_video_id(new)
+                before = len(ss.results)
                 ss.results.extend(new)
+                ss.results = dedupe_by_video_id(ss.results)
+                after = len(ss.results)
                 ss.next_token = new_token
+                st.info(f"새로 {after - before}개 추가(중복 제외). 총 {after}개")
                 st.rerun()
 else:
     st.info("좌측에서 조건을 선택/입력하고 **OK** 버튼을 눌러 검색을 시작해 보세요.")
@@ -354,21 +419,21 @@ st.markdown("</div>", unsafe_allow_html=True)
 # ------------------------------------------------
 # 개발자 도구: 캐시/재실행/진단
 # ------------------------------------------------
-with st.expander("🛠️ 개발자 도구 / 캐시 & 진단"):
+with st.expander("🛠️ 개발자 도구 / 진단"):
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("🧹 cache_data 지우기"):
+        if st.button("🧹 cache_data 지우기(하단)"):
             try:
-                st.cache_data.clear()  # 최신
+                st.cache_data.clear()
             except Exception:
                 try:
-                    st.experimental_singleton.clear()
                     st.experimental_memo.clear()
+                    st.experimental_singleton.clear()
                 except Exception:
                     pass
             st.success("cache_data cleared")
     with c2:
-        if st.button("🔄 앱 재실행"):
+        if st.button("🔄 앱 재실행(하단)"):
             st.rerun()
     with c3:
         try:
@@ -379,8 +444,8 @@ with st.expander("🛠️ 개발자 도구 / 캐시 & 진단"):
 
     st.write("Streamlit 버전:", st.__version__)
     st.write("Python 버전:", python_version())
-    st.write("모드:", "API" if not ss.use_scraping else "스크래핑")
-    st.write("API 키 인식:", "✅" if YOUTUBE_API_KEY else "❌")
+    st.write("모드:", "API" if api_key_present else "스크래핑(임시)")
+    st.write("API 키 인식:", "✅" if api_key_present else "❌")
 
 st.markdown("---")
 st.caption("© 2026 INhee Hi‑Fi Music Services · Streamlit Cloud Optimized")
