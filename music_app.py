@@ -1,9 +1,9 @@
 
 # =============================
-# INhee Hi‑Fi Music Search (Unified • secrets-safe • grid/height fix • UI scale)
+# INhee Hi‑Fi Music Search (Final Unified • secrets-safe • thumbnail-fallback • grid/height • UI-scale)
 # =============================
 
-# --- 필수 임포트 ---
+# --- Imports ---
 import os
 import re
 import json
@@ -15,11 +15,10 @@ from platform import python_version
 from datetime import datetime
 
 # --------------------
-# 전역 상수 / 버전
+# Version / Mapping
 # --------------------
-VERSION = f"2026-01-21 Unified v2 (secrets-safe + grid/height + UI-scale) @ {datetime.now().strftime('%H:%M:%S')}"
+VERSION = f"2026-01-21 Unified v3 (thumb-fallback+secrets-safe+grid/height+UI-scale) @ {datetime.now().strftime('%H:%M:%S')}"
 
-# 정렬 라벨 <-> API 파라미터 매핑
 ORDER_LABEL_MAP = {
     "조회수 많은 순": "viewCount",
     "관련도 순": "relevance",
@@ -29,7 +28,7 @@ ORDER_LABEL_MAP = {
 ORDER_INV_MAP = {v: k for k, v in ORDER_LABEL_MAP.items()}
 
 # --------------------
-# 페이지 설정
+# Page Config
 # --------------------
 st.set_page_config(
     page_title="INhee Hi‑Fi Music Search",
@@ -38,36 +37,33 @@ st.set_page_config(
 )
 
 # ============================
-# 안전한 API 키 로딩 (환경변수 → secrets → 없으면 None)
+# Safe secrets loading (env → secrets → None)
 # ============================
 def load_youtube_api_key() -> Optional[str]:
-    # 1) 환경변수 우선 (로컬/웹 IDE에서 간단)
+    # 1) Environment variable first
     key = os.getenv("YOUTUBE_API_KEY")
     if key:
         return key
-
-    # 2) Streamlit secrets (없으면 예외 가능 → 가드)
+    # 2) Streamlit secrets (guard: may raise when secrets.toml absent)
     try:
-        # secrets.toml이 없거나 키가 없으면 예외 가능
         key = st.secrets["YOUTUBE_API_KEY"]
         if key:
             return key
     except Exception:
         pass
-
-    # 3) 없으면 None → 스크래핑 모드 폴백
+    # 3) None → fallback to scraping mode
     return None
 
 YOUTUBE_API_KEY = load_youtube_api_key()
 
 # ============================
-# 사이드바 (먼저 렌더: UI 배율/검색 설정)
+# Sidebar (render first)
 # ============================
 with st.sidebar:
     st.header("🔎 검색 설정")
 
-    # 글자/UI 배율 (작게 보일 때 키우기)
-    ui_scale = st.slider("👁 글자/UI 배율", 0.9, 1.6, 1.15, 0.05,
+    # UI scale (for small preview fonts in web VS Code)
+    ui_scale = st.slider("👁 글자/UI 배율", 0.9, 1.6, 1.20, 0.05,
                          help="미리보기 글자가 작다면 1.15~1.30 정도로 키워 보세요.")
 
     api_key_present = bool(YOUTUBE_API_KEY)
@@ -86,7 +82,7 @@ with st.sidebar:
     batch = st.slider("한 번에 불러올 개수", 12, 60, 24, step=4)
 
     st.markdown("---")
-    # 개발/로컬 편의: 키가 없으면 임시 입력으로 API 모드 전환
+    # Dev convenience: temporary key input to switch to API mode locally
     if not api_key_present:
         dev_key_input = st.text_input("개발용 키 입력(선택)", type="password",
                                       help="로컬에서만 임시로 입력하세요. 운영에선 secrets/환경변수 권장.")
@@ -98,9 +94,7 @@ with st.sidebar:
     do_search = st.button("✅ OK (검색 실행)")
 
 # ============================
-# UI 공통 CSS (실제 <style> 태그)
-# - ui_scale 반영
-# - 카드/텍스트 높이 고정
+# CSS (real <style> tag) with ui_scale
 # ============================
 CUSTOM_CSS = f"""
 <style>
@@ -177,6 +171,8 @@ h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
   height:170px;
   object-fit:cover;
   border-radius:10px;
+  /* 썸네일 로딩/실패 시 빈칸 방지 스켈레톤 배경 */
+  background: linear-gradient(135deg, #0b1220 0%, #0e1627 100%);
 }}
 
 /* 텍스트 영역 높이 고정(제목 2줄 + 메타 1줄) */
@@ -232,7 +228,7 @@ h1,h2,h3 {{ color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }}
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # ============================
-# 유틸
+# Utils
 # ============================
 def parse_iso8601_duration(iso: str) -> str:
     h = re.search(r"(\d+)H", iso or "")
@@ -257,13 +253,37 @@ def dedupe_by_video_id(items: List[Dict]) -> List[Dict]:
         out.append(it)
     return out
 
+# --- Thumbnail fallback utils ---
+PLACEHOLDER_THUMB = "https://via.placeholder.com/320x180/0b1220/9dd5ff?text=No+Thumbnail"
+
+def build_thumb_url_from_id(video_id: str) -> str:
+    """
+    Use a stable YouTube thumbnail path.
+    hqdefault is widely available; maxres may not exist for some videos.
+    """
+    return f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+
+def sanitize_thumb_url(video_id: Optional[str], api_thumb_dict: Optional[dict]) -> str:
+    """
+    Prefer API-provided thumbnails if present;
+    otherwise fallback to i.ytimg.com path; if no video_id, use placeholder.
+    """
+    if api_thumb_dict and isinstance(api_thumb_dict, dict):
+        for key in ("medium", "high", "default"):
+            v = api_thumb_dict.get(key)
+            if v and v.get("url"):
+                return v["url"]
+    if video_id:
+        return build_thumb_url_from_id(video_id)
+    return PLACEHOLDER_THUMB
+
 # ============================
-# YouTube API / SCRAPING
+# YouTube API / Scraping
 # ============================
 SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=300)
 def yt_api_search(query: str, order: str = "viewCount", max_results: int = 50, page_token: Optional[str] = None):
     params = {
         "part": "snippet",
@@ -307,12 +327,12 @@ def yt_api_search(query: str, order: str = "viewCount", max_results: int = 50, p
         vid = it["id"]["videoId"]
         sn = it.get("snippet", {})
         thumbs = sn.get("thumbnails", {})
-        thumb = thumbs.get("medium") or thumbs.get("high") or thumbs.get("default") or {}
+        thumb_url = sanitize_thumb_url(vid, thumbs)
         results.append({
             "video_id": vid,
             "title": sn.get("title", ""),
             "channel": sn.get("channelTitle", ""),
-            "thumbnail": thumb.get("url", f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg"),
+            "thumbnail": thumb_url,
             "duration": durations.get(vid, "LIVE/SHORT")
         })
     return results, next_token
@@ -343,7 +363,7 @@ def _extract_json_after_marker(html: str, marker: str) -> Optional[str]:
         i += 1
     return None
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=600)
 def scrape_youtube_search(query: str, max_items: int = 50) -> Tuple[List[Dict], Optional[int], Optional[int], Optional[str]]:
     q = urllib.parse.quote(query)
     url = f"https://www.youtube.com/results?search_query={q}&hl=ko&gl=KR"
@@ -387,7 +407,7 @@ def scrape_youtube_search(query: str, max_items: int = 50) -> Tuple[List[Dict], 
                     "video_id": vid,
                     "title": title,
                     "channel": channel,
-                    "thumbnail": f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg",
+                    "thumbnail": sanitize_thumb_url(vid, None),
                     "duration": length
                 })
             if len(results) >= max_items:
@@ -398,7 +418,7 @@ def scrape_youtube_search(query: str, max_items: int = 50) -> Tuple[List[Dict], 
         return [], None, None, str(e)
 
 # ============================
-# 세션 상태
+# Session state
 # ============================
 ss = st.session_state
 ss.setdefault("selected_video_id", "LK0sKS6l2V4")
@@ -409,9 +429,9 @@ ss.setdefault("use_scraping", not bool(YOUTUBE_API_KEY))
 ss.setdefault("current_order", "viewCount")
 
 # ============================
-# 상단 타이틀 & 플레이어
+# Title & Player
 # ============================
-st.title("🎵 INhee Hi‑Fi Music Room")
+st.title("🎵 INhee Hi‑Fi Music Search")
 st.caption(f"App VERSION: {VERSION}")
 
 st.markdown('<div class="section glass">', unsafe_allow_html=True)
@@ -422,7 +442,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================
-# 검색 로직
+# Search logic
 # ============================
 def build_query(g: str, i: str, q: str) -> str:
     parts = []
@@ -468,14 +488,14 @@ def run_search(query: str, batch_size: int, order: str):
 
 if do_search:
     q = build_query(genre, instrument, direct)
-    ss.current_order = current_order  # 사이드바 선택 반영
+    ss.current_order = current_order
     if not q:
         st.warning("검색어를 입력하거나 장르/악기를 선택한 뒤 **OK**를 눌러주세요.")
     else:
         run_search(q, batch, ss.current_order)
 
 # ============================
-# 결과 출력 (행 단위 렌더링 + 더보기)
+# Results (row-wise grid + "more")
 # ============================
 st.markdown('<div class="section glass">', unsafe_allow_html=True)
 st.subheader("🎼 검색 결과")
@@ -496,7 +516,10 @@ elif ss.results:
             with cols[col_idx]:
                 st.markdown('<div class="card">', unsafe_allow_html=True)
 
-                thumb = item.get("thumbnail") or f"https://i.ytimg.com/vi/{item['video_id']}/mqdefault.jpg"
+                vid = item.get("video_id")
+                thumb = item.get("thumbnail")
+                if not thumb or not isinstance(thumb, str):
+                    thumb = sanitize_thumb_url(vid, None)
                 st.image(thumb, use_container_width=True)
 
                 st.markdown('<div class="textwrap">', unsafe_allow_html=True)
@@ -536,7 +559,7 @@ else:
 st.markdown("</div>", unsafe_allow_html=True)
 
 # ============================
-# 개발자 도구 / 진단
+# Dev tools / Diagnostics
 # ============================
 with st.expander("🛠️ 개발자 도구 / 진단"):
     c1, c2 = st.columns(2)
@@ -556,7 +579,7 @@ with st.expander("🛠️ 개발자 도구 / 진단"):
     st.write("현재 정렬:", ORDER_INV_MAP.get(ss.current_order, ss.current_order))
     st.write("API 모드 여부:", "예" if not ss.use_scraping else "아니오")
 
-    # 현재 실행 파일/엔트리 확인(웹 IDE에서 경로 디버깅)
+    # Runtime file info (for web IDE)
     try:
         st.write("RUN FILE:", __file__)
     except Exception:
