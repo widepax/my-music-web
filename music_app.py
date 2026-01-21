@@ -3,181 +3,357 @@ import urllib.parse
 import requests
 from bs4 import BeautifulSoup
 import re
+import time
 
-# 1. 페이지 설정 및 디자인 (다크/네온/모던 테마)
-st.set_page_config(page_title="INhee Hi-Fi Music Search", layout="wide", initial_sidebar_state="expanded")
+# 페이지 설정 - 세련된 디자인
+st.set_page_config(
+    page_title="🎵 INhee Hi-Fi Music Search", 
+    layout="wide", 
+    initial_sidebar_state="expanded",
+    page_icon="🎵"
+)
 
+# 세련된 CSS 디자인 (Glassmorphism + Gradient + Modern)
 st.markdown("""
-    <style>
-    .main { 
-        background-color: #1a1a2e; /* 다크 블루 */
-        color: #e0e0e0; /* 밝은 회색 텍스트 */
-        font-family: 'Segoe UI', sans-serif;
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    
+    .main {
+        background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+        color: #e2e8f0;
+        font-family: 'Inter', sans-serif;
     }
-    h1, h2, h3, h4, h5, h6 { 
-        color: #00bcd4; /* 네온 시안 */
+    
+    h1, h2, h3 {
+        color: #00d4ff;
+        font-weight: 700;
         text-align: center;
-        text-shadow: 0 0 5px #00bcd4; /* 약간의 네온 효과 */
+        background: linear-gradient(45deg, #00d4ff, #0099cc);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        text-shadow: 0 0 30px rgba(0, 212, 255, 0.5);
     }
-    .stSelectbox label, .stTextInput label, .stButton>button { 
-        color: #00bcd4 !important; 
-        font-weight: bold;
+    
+    /* Glassmorphism 효과 */
+    .glass-card {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(20px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 20px;
+        padding: 2rem;
+        box-shadow: 0 8px 32px rgba(0, 212, 255, 0.1);
     }
-    .stButton>button {
-        background-color: #2c3e50; /* 어두운 버튼 배경 */
-        border: 1px solid #00bcd4;
-        border-radius: 5px;
-        padding: 10px 20px;
-        transition: all 0.2s ease-in-out;
+    
+    .stSelectbox > div > div > select,
+    .stTextInput > div > div > input {
+        background: rgba(255, 255, 255, 0.08);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(0, 212, 255, 0.3);
+        border-radius: 12px;
+        color: #e2e8f0;
+        padding: 12px 16px;
+        font-size: 14px;
+        transition: all 0.3s ease;
     }
-    .stButton>button:hover {
-        background-color: #00bcd4; /* 호버 시 네온 배경 */
-        color: #1a1a2e !important;
-        text-shadow: none;
+    
+    .stSelectbox > div > div > select:focus,
+    .stTextInput > div > div > input:focus {
+        border-color: #00d4ff;
+        box-shadow: 0 0 0 3px rgba(0, 212, 255, 0.2);
+        transform: translateY(-2px);
     }
-    .stTextInput>div>div>input {
-        background-color: #2c3e50; /* 어두운 입력창 */
-        color: #e0e0e0;
-        border: 1px solid #00bcd4;
-        border-radius: 5px;
-    }
-    .video-container {
-        border: 2px solid #00bcd4;
-        border-radius: 10px;
+    
+    /* 검색 버튼 */
+    .stButton > button {
+        background: linear-gradient(45deg, #00d4ff, #0099cc);
+        color: white;
+        border: none;
+        border-radius: 15px;
+        padding: 14px 32px;
+        font-weight: 600;
+        font-size: 16px;
+        box-shadow: 0 8px 25px rgba(0, 212, 255, 0.4);
+        transition: all 0.3s ease;
+        position: relative;
         overflow: hidden;
-        margin-top: 20px;
-        box-shadow: 0 0 15px rgba(0, 188, 212, 0.5); /* 네온 그림자 */
     }
+    
+    .stButton > button:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 15px 35px rgba(0, 212, 255, 0.6);
+    }
+    
+    .stButton > button:active {
+        transform: translateY(-1px);
+    }
+    
+    /* 비디오 플레이어 */
+    .video-player-container {
+        background: rgba(0, 0, 0, 0.7);
+        backdrop-filter: blur(20px);
+        border-radius: 24px;
+        padding: 2rem;
+        border: 1px solid rgba(0, 212, 255, 0.3);
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+    }
+    
+    /* 음악 카드 - Grid 레이아웃 */
+    .music-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1.5rem;
+        padding: 2rem 0;
+    }
+    
     .music-card {
-        background-color: #2c3e50; /* 카드 배경 */
-        border: 1px solid #00bcd4;
-        border-radius: 10px;
-        padding: 10px;
-        margin-bottom: 10px;
-        display: flex;
-        align-items: center;
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(15px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 20px;
+        padding: 1.5rem;
         cursor: pointer;
-        transition: all 0.2s ease-in-out;
-        box-shadow: 0 0 5px rgba(0, 188, 212, 0.3);
+        transition: all 0.3s ease;
+        position: relative;
+        overflow: hidden;
     }
+    
+    .music-card::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -100%;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(90deg, transparent, rgba(0, 212, 255, 0.2), transparent);
+        transition: left 0.5s;
+    }
+    
+    .music-card:hover::before {
+        left: 100%;
+    }
+    
     .music-card:hover {
-        background-color: #3f5f70; /* 호버 시 색상 변화 */
-        box-shadow: 0 0 15px rgba(0, 188, 212, 0.7);
+        transform: translateY(-8px);
+        box-shadow: 0 20px 40px rgba(0, 212, 255, 0.3);
+        border-color: rgba(0, 212, 255, 0.5);
     }
-    .music-card img {
-        width: 120px;
-        height: 90px;
-        border-radius: 5px;
-        margin-right: 15px;
+    
+    .thumbnail-img {
+        width: 100%;
+        height: 160px;
         object-fit: cover;
+        border-radius: 12px;
+        margin-bottom: 1rem;
     }
-    .music-card-title {
-        color: #e0e0e0;
-        font-weight: bold;
-        margin-bottom: 5px;
-    }
-    .music-card-channel {
-        color: #00bcd4;
-        font-size: 0.85em;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-st.title("🎵 INhee Hi-Fi Music Search")
-
-# 2. 사이드바: 검색 조건 입력
-with st.sidebar:
-    st.header("🔎 검색 설정")
-    genre = st.selectbox("음악 장르 선택", ["전체", "국내가요", "팝송", "클래식", "재즈", "OST"])
-    instrument = st.selectbox("악기 선택", ["전체", "섹소폰", "드럼", "기타", "베이스", "피아노"])
     
-    st.markdown("---")
-    direct_query = st.text_input("직접 검색어 입력", placeholder="예: 비틀즈, 감미로운 재즈")
+    .music-title {
+        font-weight: 600;
+        font-size: 16px;
+        margin-bottom: 0.5rem;
+        color: #e2e8f0;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+    }
     
-    st.markdown("---")
-    # 검색 트리거 버튼
-    search_button = st.button("🎶 검색 시작")
+    .music-duration {
+        color: #00d4ff;
+        font-size: 14px;
+        font-weight: 500;
+    }
+    
+    /* 사이드바 개선 */
+    .css-1d391kg {
+        background: linear-gradient(180deg, rgba(15,15,35,0.95) 0%, rgba(26,26,46,0.95) 100%);
+        backdrop-filter: blur(20px);
+    }
+    
+    .stMarkdown {
+        font-size: 14px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-# 3. 메인 영역: 검색 결과 및 플레이어
-st.subheader("📺 지금 바로 감상하세요!")
-current_video_url = st.empty() # 재생될 영상 URL을 저장할 임시 공간
-
-# 초기 플레이어 (기본 영상)
+# 세션 상태 초기화
+if 'search_results' not in st.session_state:
+    st.session_state.search_results = []
 if 'selected_video_id' not in st.session_state:
-    st.session_state.selected_video_id = "LK0sKS6l2V4" # 사용자님의 섹소폰 영상 ID
-st.markdown(f'<div class="video-container">{st.video(f"https://www.youtube.com/watch?v={st.session_state.selected_video_id}")}</div>', unsafe_allow_html=True)
+    st.session_state.selected_video_id = None
+if 'search_triggered' not in st.session_state:
+    st.session_state.search_triggered = False
 
+# 메인 헤더
+st.markdown("""
+<div class="glass-card" style="text-align: center; margin-bottom: 3rem;">
+    <h1>🎵 INhee Hi-Fi Music Search</h1>
+    <p style="color: #94a3b8; font-size: 18px; margin-top: -0.5rem;">
+        원하는 음악을 찾아 바로 감상하세요
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
-st.subheader("⚡ 검색 결과 리스트")
-
-# 검색 실행 로직
-if search_button:
-    search_terms = []
-    if genre and genre != "전체":
-        search_terms.append(genre)
-    if instrument and instrument != "전체":
-        search_terms.append(instrument)
-    if direct_query:
-        search_terms.append(direct_query)
+# 1단계: 사이드바 - 검색 조건 수집 (검색 즉시 실행 안됨)
+with st.sidebar:
+    st.markdown('<div class="glass-card" style="padding: 2rem;">', unsafe_allow_html=True)
     
-    final_query = "+".join(search_terms) if search_terms else "음악" # 검색어 없으면 '음악'으로 검색
+    st.markdown("""
+        <h3 style="color: #00d4ff; margin-bottom: 1.5rem; text-align: center;">
+            🔎 검색 조건 설정
+        </h3>
+    """, unsafe_allow_html=True)
     
-    if final_query:
-        encoded_query = urllib.parse.quote(final_query)
-        youtube_search_url = f"https://www.youtube.com/results?search_query={encoded_query}"
+    # 정확히 요청한 옵션들만
+    genre_options = ["국내가요", "팝송", "섹소폰", "클래식"]
+    instrument_options = ["섹소폰", "드럼", "기타", "베이스"]
+    
+    selected_genre = st.selectbox("🎼 장르 선택", genre_options, key="genre")
+    selected_instrument = st.selectbox("🎸 악기 선택", instrument_options, key="instrument")
+    keyword_input = st.text_input("🔤 직접 입력", placeholder="추가 키워드...", key="keyword")
+    
+    st.markdown("---")
+    
+    # 2단계: OK1 버튼 (검색 트리거)
+    if st.button("🚀 OK1 검색 시작", key="search_ok1", help="모든 조건을 조합하여 검색합니다"):
+        search_terms = []
+        if selected_genre:
+            search_terms.append(selected_genre)
+        if selected_instrument:
+            search_terms.append(selected_instrument)
+        if keyword_input:
+            search_terms.append(keyword_input.strip())
         
-        # Streamlit Spinner로 로딩 표시 (i5-11400도 네트워크 대기는 필요)
-        with st.spinner(f"'{final_query}'(으)로 유튜브 검색 중... 🌐"):
-            try:
-                # 웹 스크래핑으로 유튜브 검색 결과 파싱 (API 없이 섬네일 가져오기)
-                response = requests.get(youtube_search_url)
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # 유튜브 검색 결과에서 영상 정보 추출 (정규식 활용)
-                # 이 패턴은 유튜브 업데이트에 따라 변경될 수 있습니다.
-                video_data = re.findall(r'"videoRenderer":{"videoId":"(.*?)"[^}]*"title":{"runs":\[{"text":"(.*?)"}\][^}]*"lengthText":{"simpleText":"(.*?)"}[^}]*"ownerText":{"runs":\[{"text":"(.*?)"}\]}', response.text)
-                
-                if video_data:
-                    st.write(f"총 {len(video_data)}개의 검색 결과가 발견되었습니다.")
-                    
-                    # 4. 섬네일 리스트 출력
-                    cols_per_row = 3 # 한 줄에 3개씩 섬네일 표시
-                    rows = [st.columns(cols_per_row) for _ in range((len(video_data) + cols_per_row - 1) // cols_per_row)]
+        if search_terms:
+            final_query = " ".join(search_terms)
+            st.session_state.search_query = final_query
+            st.session_state.search_triggered = True
+            st.rerun()
+        else:
+            st.error("⚠️ 최소 하나의 검색 조건을 선택해주세요!")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
 
-                    for idx, (video_id, title, length, channel) in enumerate(video_data):
-                        if idx >= 9: break # 너무 많은 결과는 잘라냄 (최대 9개)
-                        col = rows[idx // cols_per_row][idx % cols_per_row]
-                        with col:
-                            # 섬네일 클릭 시 재생되도록 버튼 대신 HTML 링크 활용
-                            st.markdown(f"""
-                                <div class="music-card" onclick="document.getElementById('play_video_{video_id}').click();">
-                                    <img src="https://i.ytimg.com/vi/{video_id}/mqdefault.jpg" alt="{title}">
-                                    <div>
-                                        <div class="music-card-title">{title}</div>
-                                        <div class="music-card-channel">{channel} · {length}</div>
-                                    </div>
-                                    <button id="play_video_{video_id}" style="display:none;" onclick="
-                                        fetch('/_stcore/script/set_session_state', {{
-                                            method: 'POST',
-                                            headers: {{'Content-Type': 'application/json'}},
-                                            body: JSON.stringify({{key: 'selected_video_id', value: '{video_id}'}})
-                                        }});
-                                        window.location.reload();
-                                    "></button>
-                                </div>
-                            """, unsafe_allow_html=True)
-                else:
-                    st.warning("😭 검색 결과가 없습니다. 다른 검색어를 입력해 보세요.")
-            except Exception as e:
-                st.error(f"⚠️ 검색 중 오류가 발생했습니다: {e}")
-                st.warning("유튜브 웹사이트 구조 변경으로 인해 검색 기능이 일시적으로 불안정할 수 있습니다.")
+# 3단계: 검색 실행 및 결과 표시
+if st.session_state.search_triggered and 'search_query' in st.session_state:
+    search_query = st.session_state.search_query
+    
+    # 메인 영역 2열 레이아웃
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.markdown('<h3 style="text-align: center;">🎥 지금 재생 중</h3>', unsafe_allow_html=True)
+        
+        # 비디오 플레이어
+        if st.session_state.selected_video_id:
+            video_url = f"https://www.youtube.com/watch?v={st.session_state.selected_video_id}"
+            st.markdown(f"""
+                <div class="video-player-container">
+                    {st.video(video_url)}
+                </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.markdown("""
+                <div class="video-player-container" style="display: flex; align-items: center; justify-content: center; height: 300px;">
+                    <p style="color: #94a3b8; text-align: center;">
+                        검색 결과에서 영상을 선택해주세요 🎵
+                    </p>
+                </div>
+            """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<h3 style="text-align: center;">📊 검색 정보</h3>', unsafe_allow_html=True)
+        st.markdown(f"""
+            <div class="glass-card" style="padding: 1.5rem; text-align: center;">
+                <div style="font-size: 24px; color: #00d4ff; font-weight: 700;">
+                    {len(st.session_state.search_results)}개
+                </div>
+                <div style="color: #94a3b8; font-size: 14px;">
+                    검색어: <strong>{search_query}</strong>
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
+    
+    # 4단계: 섬네일 그리드 (제한 없음)
+    st.markdown('<h3 style="text-align: center; margin: 3rem 0 1rem 0;">🎨 검색 결과</h3>', unsafe_allow_html=True)
+    
+    if st.session_state.search_results:
+        # CSS Grid로 무제한 결과 표시
+        st.markdown("""
+            <div class="music-grid">
+        """, unsafe_allow_html=True)
+        
+        for i, video in enumerate(st.session_state.search_results):
+            video_id = video['id']
+            title = video['title']
+            duration = video['duration']
+            
+            st.markdown(f"""
+                <div class="music-card" onclick="playVideo('{video_id}')" 
+                     title="클릭하여 재생">
+                    <img src="https://i.ytimg.com/vi/{video_id}/mqdefault.jpg" 
+                         alt="{title}" class="thumbnail-img">
+                    <div class="music-title">{title}</div>
+                    <div class="music-duration">⏱️ {duration}</div>
+                </div>
+            """, unsafe_allow_html=True)
+        
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # JavaScript로 비디오 재생 제어
+        st.markdown(f"""
+        <script>
+        function playVideo(videoId) {{
+            // 세션 상태 업데이트
+            parent = window.parent.document;
+            sessionStateInput = parent.querySelector('input[name="selected_video_id"]');
+            if (sessionStateInput) {{
+                sessionStateInput.value = videoId;
+            }}
+            // 페이지 새로고침
+            window.parent.location.reload();
+        }}
+        </script>
+        """, unsafe_allow_html=True)
     else:
-        st.warning("✨ 검색어를 입력하거나 장르/악기를 선택하고 '검색 시작' 버튼을 눌러주세요!")
+        st.markdown("""
+            <div style="text-align: center; padding: 3rem; color: #94a3b8;">
+                <h3>🔍 검색 중...</h3>
+            </div>
+        """, unsafe_allow_html=True)
+        
+        # 실제 검색 실행 (최초 1회만)
+        if not st.session_state.search_results:
+            with st.spinner(f'"{search_query}" 검색 중... 🌐'):
+                try:
+                    encoded_query = urllib.parse.quote(search_query)
+                    youtube_url = f"https://www.youtube.com/results?search_query={encoded_query}"
+                    
+                    response = requests.get(youtube_url, timeout=10)
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    # 개선된 정규식 패턴
+                    video_pattern = r'"videoRenderer":\{"videoId":"([^"]+)".*?"title":\{"runs":\[{"text":"([^"]+)"}).*?"lengthText":\{"simpleText":"([^"]+)"'
+                    videos = re.findall(video_pattern, response.text, re.DOTALL)
+                    
+                    results = []
+                    for video_id, title, duration in videos[:50]:  # 최대 50개
+                        if video_id and title:
+                            results.append({
+                                'id': video_id,
+                                'title': title[:80] + '...' if len(title) > 80 else title,
+                                'duration': duration
+                            })
+                    
+                    st.session_state.search_results = results
+                    st.rerun()
+                    
+                except Exception as e:
+                    st.error(f"⚠️ 검색 중 오류 발생: {str(e)[:100]}")
+                    st.session_state.search_triggered = False
 
-# Streamlit 세션 상태를 활용하여 선택된 비디오 ID 업데이트
-if 'selected_video_id' in st.session_state and st.session_state.selected_video_id:
-    # 비디오 ID가 업데이트되면 메인 플레이어를 다시 그립니다.
-    pass # 이미 위에서 초기화 시 사용했으므로 추가적인 그리기 없음
-
-st.markdown("---")
-st.caption("© 2026 INhee Hi-Fi Music Services - i5-11400 Optimized for Speed")
+# 하단 푸터
+st.markdown("""
+<div style="text-align: center; padding: 3rem 0; color: #64748b; font-size: 14px;">
+    © 2026 INhee Hi-Fi Music Services | Streamlit Cloud & GitHub Optimized
+</div>
+""", unsafe_allow_html=True)
