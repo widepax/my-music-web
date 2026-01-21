@@ -23,7 +23,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # --- 대문 (헤더) ---
-st.markdown('<div class="main-title">🎶 OOO의 Hi-Fi Music Room 🎶</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-title">🎶 INhee Hi-Fi Music Room 🎶</div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-title">선별된 고화질/고음질 음악을 함께 감상하는 공간입니다.</div>', unsafe_allow_html=True)
 
 # --- 사이드바: 드롭다운 분류 ---
