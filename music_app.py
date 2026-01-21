@@ -1,7 +1,7 @@
 import os
 import requests
 import streamlit as st
-import webbrowser  # 특정 채널 외부 재생을 위해 추가
+import webbrowser
 from typing import List, Dict, Optional
 
 # =============================
@@ -41,19 +41,20 @@ with st.sidebar:
     batch = st.slider("검색 개수", 12, 60, 24, step=4)
     do_search = st.button("✅ 검색 실행 (OK)")
 
-# CSS: 카드 전체 클릭 가능하도록 레이어 수정
+# CSS: 섬네일 어느 곳을 눌러도 클릭되도록 버튼 레이어 강제 조정
 st.markdown(f"""
 <style>
     :root {{ --ui-scale: {ui_scale}; }}
     html, .stApp {{ font-size: calc(16px * var(--ui-scale)); background: #070b15; color:#e6f1ff; }}
     
+    /* 카드 컨테이너 */
     .card-outer {{
         position: relative;
         width: 100%;
         margin-bottom: 25px;
-        cursor: pointer;
     }}
 
+    /* 디자인 레이어: 클릭 무시 */
     .card-design {{
         position: relative;
         background: rgba(255,255,255,0.05);
@@ -64,14 +65,13 @@ st.markdown(f"""
         pointer-events: none; 
         transition: all 0.2s;
     }}
-    
     .card-outer:hover .card-design {{
         border-color: #00e5ff;
         background: rgba(255,255,255,0.1);
         transform: translateY(-5px);
     }}
 
-    /* 투명 버튼이 카드 전체를 덮도록 설정 */
+    /* 실제 클릭을 받는 Streamlit 버튼 레이어: 카드 전체를 덮음 */
     .card-outer div[data-testid="stButton"] {{
         position: absolute !important;
         top: 0 !important;
@@ -89,6 +89,7 @@ st.markdown(f"""
         color: transparent !important;
         padding: 0 !important;
         margin: 0 !important;
+        cursor: pointer !important;
     }}
 
     .view-badge {{
@@ -106,7 +107,6 @@ st.markdown(f"""
 </style>
 """, unsafe_allow_html=True)
 
-# 검색 결과 처리 및 포맷
 def format_views(count):
     if not count: return "0"
     c = int(count)
@@ -132,16 +132,10 @@ def search_youtube(query, order, limit, page_token=None):
         return results, res.get("nextPageToken")
     except: return [], None
 
-# MR/노래방 키워드 강화 로직 반영
 def build_query(g, i, d):
     d_clean = d.strip()
     if g == "MR/노래방":
-        if d_clean:
-            # 곡 제목이 있을 경우 요청하신 핵심 키워드 조합
-            return f'"{d_clean}" (노래방 OR MR OR Instrument OR Karaoke)'
-        else:
-            return "인기 노래방 반주"
-    
+        return f'"{d_clean}" (노래방 OR MR OR Instrument OR Karaoke)' if d_clean else "인기 노래방 반주"
     parts = [f'"{d_clean}"'] if d_clean else []
     if g != "(선택 없음)": parts.append(g)
     if i != "(선택 없음)": parts.append(i)
@@ -159,7 +153,7 @@ if do_search:
     ss.results, ss.next_token = res, nt
 
 # 메인 UI
-st.title("🎵 INhee Hi-Fi Music Room")
+st.title("🎵 INhee Hi-Fi Music Search")
 st.video(f"https://www.youtube.com/watch?v={ss.selected_video_id}")
 
 if ss.results:
@@ -171,7 +165,7 @@ if ss.results:
             if idx < len(ss.results):
                 item = ss.results[idx]
                 with col:
-                    # 카드 레이아웃
+                    # 클릭 가능한 카드 구조
                     st.markdown(f"""
                     <div class="card-outer">
                         <div class="card-design">
@@ -182,16 +176,13 @@ if ss.results:
                         </div>
                     """, unsafe_allow_html=True)
                     
-                    # 버튼 클릭 이벤트 (디자인 전체를 덮음)
-                    if st.button("", key=f"v_{item['id']}_{idx}"):
-                        # TJ, 금영 등 임베디드 차단 채널 체크
-                        blocked_channels = ["TJ 노래방", "TJ Media", "금영 노래방", "KY Karaoke"]
-                        is_blocked = any(name in item['channel'] for name in blocked_channels)
-                        
-                        if is_blocked:
-                            # 새 탭에서 유튜브 원본 주소로 이동
+                    # 투명 버튼: 섬네일 어느 곳을 눌러도 작동
+                    if st.button("", key=f"btn_{item['id']}_{idx}"):
+                        # 재생 불가 채널(TJ, 금영) 체크
+                        blocked_list = ["TJ 노래방", "TJ Media", "금영 노래방", "KY Karaoke"]
+                        if any(name in item['channel'] for name in blocked_list):
+                            # 직접 유튜브로 이동
                             webbrowser.open(f"https://www.youtube.com/watch?v={item['id']}")
-                            st.toast(f"'{item['channel']}' 채널은 유튜브에서 직접 재생됩니다.", icon="🚀")
                         else:
                             # 상단 플레이어 교체
                             ss.selected_video_id = item['id']
