@@ -1,6 +1,6 @@
 
 # =============================
-# INhee Hi‑Fi Music Search (Unified, dark UI + dedupe + unique keys)
+# INhee Hi‑Fi Music Search (Fixed Cards + ViewCount Default + Toggle Diagnostics)
 # =============================
 
 # --- 반드시 최상단: import & cache 데코레이터 폴리필 ---
@@ -24,8 +24,9 @@ from typing import List, Dict, Tuple, Optional
 from platform import python_version
 import os
 
-# --- 배포 반영 상태 확인용 버전 배너(매 커밋 시 숫자 변경 권장) ---
-VERSION = "2026-01-21-14:25 KST (dark-ui+clamp+dedupe+unique-keys)"
+# --- 배포 반영 상태 확인용 (원하시면 숨김 가능) ---
+VERSION = "2026-01-21-15:10 KST (fixed-cards+viewcount-default)"
+SHOW_DIAGNOSTIC_BADGES = False   # ← True면 사이드바에 배지 노출, False면 숨김
 
 # ------------------------------------------------
 # 페이지/테마/CSS
@@ -46,7 +47,7 @@ CUSTOM_CSS = """
 }
 h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
 
-/* 글래스 카드 */
+/* 글래스 카드 래퍼 */
 .glass {
   background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
   border:1px solid rgba(0,229,255,.18);
@@ -89,8 +90,12 @@ h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
   box-shadow:0 16px 34px rgba(0,0,0,.35);
 }
 
-/* 카드 */
+/* 카드: 높이 균일화를 위한 flex column 구성 */
 .card {
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-start;
+  height: 330px; /* ← 카드 전체 높이 고정 */
   cursor:pointer;
   border-radius:12px;
   padding:10px;
@@ -104,36 +109,49 @@ h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
   border:1px solid rgba(0,229,255,.35);
 }
 
-/* 썸네일 */
+/* 썸네일: 고정 높이 */
 .card img {
   width:100%;
-  height:170px;
+  height:170px;       /* ← 썸네일 높이 고정 */
   object-fit:cover;
   border-radius:10px;
 }
 
-/* 제목/메타 - 줄수 제한(클램프)로 카드 높이 균일화 */
+/* 텍스트 컨테이너 */
+.card .textwrap {
+  display:flex;
+  flex-direction:column;
+  margin-top:8px;
+  min-height: 78px;   /* 제목+메타 영역 고정 (44 + 20 + 마진) */
+}
+
+/* 제목/메타 - 줄수 제한(클램프) */
 .card .title {
   font-weight:700;
-  margin-top:8px;
   color:#eaf7ff;
   display:-webkit-box;
-  -webkit-line-clamp:2;
+  -webkit-line-clamp:2;       /* 2줄 고정 */
   -webkit-box-orient:vertical;
   overflow:hidden;
   text-overflow:ellipsis;
-  min-height: 44px; /* 2줄 높이 확보 */
+  min-height: 44px;           /* 2줄 높이 확보 */
+  line-height: 1.2em;
 }
 .card .meta {
   font-size:.88rem;
   color:#9dd5ff;
   margin-top:4px;
   display:-webkit-box;
-  -webkit-line-clamp:1;
+  -webkit-line-clamp:1;       /* 1줄 고정 */
   -webkit-box-orient:vertical;
   overflow:hidden;
   text-overflow:ellipsis;
-  min-height: 20px; /* 1줄 높이 확보 */
+  min-height: 20px;           /* 1줄 높이 확보 */
+}
+
+/* 버튼을 항상 바닥에 붙이기 */
+.card .btnwrap {
+  margin-top:auto;            /* 남은 공간을 위로 밀고 버튼은 바닥 고정 */
 }
 
 /* 섹션 여백 */
@@ -168,20 +186,24 @@ def parse_iso8601_duration(iso: str) -> str:
     return f"{hh:d}:{mm:02d}:{ss:02d}" if hh else f"{mm:d}:{ss:02d}"
 
 # ------------------------------------------------
-# YouTube API (권장)
+# YouTube API
 # ------------------------------------------------
 YOUTUBE_API_KEY = st.secrets.get("YOUTUBE_API_KEY", None)
 SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
 
 @cache_data(show_spinner=False)
-def yt_api_search(query: str, max_results: int = 50, page_token: Optional[str] = None):
+def yt_api_search(query: str, order: str = "viewCount", max_results: int = 50, page_token: Optional[str] = None):
+    """
+    order: date | rating | relevance | title | videoCount | viewCount
+    기본값 'viewCount' (조회수 많은 순)
+    """
     params = {
         "part": "snippet",
         "q": query,
         "type": "video",
         "maxResults": min(max_results, 50),
-        "order": "relevance",
+        "order": order,
         "videoEmbeddable": "true",
         "safeSearch": "none",
         "regionCode": "KR",
@@ -229,7 +251,7 @@ def yt_api_search(query: str, max_results: int = 50, page_token: Optional[str] =
     return results, next_token
 
 # ------------------------------------------------
-# 스크래핑(대체 경로): 정규식 제거, 중괄호 밸런싱으로 ytInitialData 파싱
+# 스크래핑(대체): 정규식 제거, 중괄호 밸런싱으로 ytInitialData 파싱
 # ------------------------------------------------
 COMMON_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
@@ -334,15 +356,17 @@ ss.setdefault("last_query", "")
 ss.setdefault("results", [])
 ss.setdefault("next_token", None)
 ss.setdefault("use_scraping", False)
+ss.setdefault("current_order", "viewCount")  # 기본값: 조회수 많은 순
 
 # ------------------------------------------------
-# 사이드바: 버전/상태/개발자 도구(혼선 방지)
+# 사이드바: 진단 배지(원하면 숨김 가능)
 # ------------------------------------------------
-st.sidebar.write(f"🔖 App Version: `{VERSION}`")
-st.sidebar.write(f"📄 Running file: `{__file__}`")
-sha = os.environ.get("STREAMLIT_COMMIT_HASH") or os.environ.get("GITHUB_SHA")
-if sha:
-    st.sidebar.write(f"🔗 Commit: `{sha[:8]}`")
+if SHOW_DIAGNOSTIC_BADGES:
+    st.sidebar.write(f"🔖 App Version: `{VERSION}`")
+    st.sidebar.write(f"📄 Running file: `{__file__}`")
+    sha = os.environ.get("STREAMLIT_COMMIT_HASH") or os.environ.get("GITHUB_SHA")
+    if sha:
+        st.sidebar.write(f"🔗 Commit: `{sha[:8]}`")
 
 api_key_present = bool(YOUTUBE_API_KEY)
 st.sidebar.write("🔐 YOUTUBE_API_KEY:", "✅ 감지" if api_key_present else "❌ 없음")
@@ -385,6 +409,16 @@ with st.sidebar:
     genre = st.selectbox("장르 선택", ["(선택 없음)", "국내가요", "팝송", "섹소폰", "클래식"], index=0)
     instrument = st.selectbox("악기 선택", ["(선택 없음)", "섹소폰", "드럼", "기타", "베이스"], index=0)
     direct = st.text_input("직접 입력", placeholder="예: 재즈 발라드, Beatles")
+
+    # 정렬 옵션 (기본: 조회수 순)
+    order_map = {
+        "조회수 많은 순": "viewCount",
+        "관련도 순": "relevance",
+        "업로드 날짜 순": "date",
+        "평점 순": "rating",
+    }
+    order_label = st.selectbox("정렬 기준", list(order_map.keys()), index=0)
+    ss.current_order = order_map[order_label]
 
     st.markdown("---")
     grid_cols = st.slider("한 줄 카드 수", 2, 6, 4)
@@ -433,9 +467,9 @@ def run_search(query: str, batch_size: int):
             ss.results = dedupe_by_video_id(ss.results)
             ss.next_token = None  # 스크래핑은 더 보기 불가
         else:
-            # API 모드
+            # API 모드 (정렬: ss.current_order)
             try:
-                results, nextt = yt_api_search(query, max_results=batch_size, page_token=None)
+                results, nextt = yt_api_search(query, order=ss.current_order, max_results=batch_size, page_token=None)
                 ss.results.extend(results)
                 ss.results = dedupe_by_video_id(ss.results)
                 ss.next_token = nextt
@@ -465,25 +499,600 @@ elif ss.results:
     # 렌더 직전 한 번 더 중복 제거(안전)
     ss.results = dedupe_by_video_id(ss.results)
 
-    st.caption(f"🔎 ‘{ss.last_query}’ — 현재 {len(ss.results)}개 로드됨")
+    st.caption(f"🔎 ‘{ss.last_query}’ — 현재 {len(ss.results)}개 로드됨 · 정렬: {order_label}")
     cols = st.columns(grid_cols)
     for i, item in enumerate(ss.results):
         with cols[i % grid_cols]:
+            # 카드 고정 높이 레이아웃
             st.markdown('<div class="card">', unsafe_allow_html=True)
             st.image(item["thumbnail"], use_container_width=True)
+            st.markdown('<div class="textwrap">', unsafe_allow_html=True)
             st.markdown(f'<div class="title">{item["title"]}</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="meta">{item["channel"]} · {item["duration"]}</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)  # textwrap
+            st.markdown('<div class="btnwrap">', unsafe_allow_html=True)
             # 🔑 key를 고유하게: video_id + 인덱스(중복 방지)
             if st.button("▶ 재생", key=f"play_{item['video_id']}_{i}", use_container_width=True):
                 ss.selected_video_id = item["video_id"]
                 st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)  # btnwrap
+            st.markdown('</div>', unsafe_allow_html=True)  # card
 
     # 더 보기(썸네일 제한 없음) — API 모드에서 무한 로딩
     if ss.next_token and not ss.use_scraping:
         if st.button("＋ 더 보기", key=f"more_{len(ss.results)}_{ss.next_token or 'end'}", use_container_width=True):
             with st.spinner("추가 로딩 중…"):
-                new, new_token = yt_api_search(ss.last_query, max_results=batch, page_token=ss.next_token)
+                new, new_token = yt_api_search(ss.last_query, order=ss.current_order, max_results=batch, page_token=ss.next_token)
+                # 새 결과 먼저 중복 제거
+                new = dedupe_by_video_id(new)
+                # 확장 후에도 다시 한 번 중복 제거
+                ss.results.extend(new)
+                ss.results = dedupe_by_video_id(ss.results)
+                ss.next_token = new_token
+                st.rerun()
+else:
+    st.info("좌측에서 조건을 선택/입력하고 **OK** 버튼을 눌러 검색을 시작해 보세요.")
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ------------------------------------------------
+# 개발자 도구: 캐시/재실행/진단 (조용히 Expander 안에)
+# ------------------------------------------------
+with st.expander("🛠️ 개발자 도구 / 진단"):
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("🧹 cache_data 지우기(하단)"):
+            try:
+                st.cache_data.clear()
+            except Exception:
+                try:
+                    st.experimental_memo.clear()
+                    st.experimental_singleton.clear()
+                except Exception:
+                    pass
+            st.success("cache_data cleared")
+    with c2:
+        if st.button("🔄 앱 재실행(하단)"):
+            st.rerun()
+    with c3:
+        try:
+            pr = requests.get("https://www.google.com", timeout=5)
+            st.success(f"인터넷 연결 OK (HTTP {pr.status_code})")
+        except Exception as e:
+            st.error(f"인터넷 연결 실패: {e}")
+
+    st.write("Streamlit 버전:", st.__version__)
+    st.write("Python 버전:", python_version())
+    st.write("모드:", "API" if api_key_present else "스크래핑(임시)")
+    st.write("API 키 인식:", "✅" if api_key_present else "❌")
+
+st.markdown("---")
+st.caption("© 2026 INhee Hi‑Fi Music Services · Streamlit Cloud Optimized")
+
+# =============================
+# INhee Hi‑Fi Music Search (Fixed Cards + ViewCount Default + Toggle Diagnostics)
+# =============================
+
+# --- 반드시 최상단: import & cache 데코레이터 폴리필 ---
+import sys
+try:
+    import streamlit as st
+except Exception as e:
+    raise RuntimeError(f"[FATAL] 'import streamlit as st' 실패: {e}")
+
+# cache_data / cache 폴리필 (버전 호환)
+if hasattr(st, "cache_data"):
+    cache_data = st.cache_data  # 최신 권장
+else:
+    cache_data = st.cache       # 구버전 호환 (deprecated)
+
+import requests
+import urllib.parse
+import json
+import re
+from typing import List, Dict, Tuple, Optional
+from platform import python_version
+import os
+
+# --- 배포 반영 상태 확인용 (원하시면 숨김 가능) ---
+VERSION = "2026-01-21-15:10 KST (fixed-cards+viewcount-default)"
+SHOW_DIAGNOSTIC_BADGES = False   # ← True면 사이드바에 배지 노출, False면 숨김
+
+# ------------------------------------------------
+# 페이지/테마/CSS
+# ------------------------------------------------
+st.set_page_config(
+    page_title="INhee Hi‑Fi Music Search",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+CUSTOM_CSS = """
+<style>
+/* 배경 + 기본 폰트 */
+.stApp {
+  background: radial-gradient(1200px 800px at 8% 10%, #0a0f1f 0%, #080d1a 50%, #070b15 100%);
+  color:#e6f1ff;
+  font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Noto Sans KR", sans-serif;
+}
+h1,h2,h3 { color:#00e5ff; text-shadow:0 0 6px rgba(0,229,255,.35); }
+
+/* 글래스 카드 래퍼 */
+.glass {
+  background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
+  border:1px solid rgba(0,229,255,.18);
+  border-radius:14px;
+  backdrop-filter:blur(10px);
+  box-shadow:0 10px 26px rgba(0,20,50,.35);
+}
+
+/* 버튼 - 더 검은 톤 */
+.stButton>button {
+  background:linear-gradient(120deg,#0b0f1a,#111827);
+  border:1px solid rgba(0,229,255,.25)!important;
+  color:#eaf7ff;
+  font-weight:700;
+  padding:.58rem .95rem;
+  border-radius:10px;
+  transition:transform .06s ease, box-shadow .2s ease, border .2s ease, background .25s ease;
+}
+.stButton>button:hover {
+  transform: translateY(-1px);
+  box-shadow:0 8px 18px rgba(0,229,255,.18);
+  border:1px solid rgba(0,229,255,.45)!important;
+  background:linear-gradient(120deg,#0e1422,#182236);
+}
+
+/* 입력/셀렉트 - 다크 톤 */
+.stTextInput>div>div>input,
+.stSelectbox div[data-baseweb="select"]>div {
+  background:rgba(255,255,255,.05)!important;
+  border:1px solid rgba(0,229,255,.18)!important;
+  color:#e6f1ff!important;
+  border-radius:10px!important;
+}
+
+/* 플레이어 프레임 */
+.video-frame {
+  border-radius:14px;
+  overflow:hidden;
+  border:1px solid rgba(0,229,255,.18);
+  box-shadow:0 16px 34px rgba(0,0,0,.35);
+}
+
+/* 카드: 높이 균일화를 위한 flex column 구성 */
+.card {
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-start;
+  height: 330px; /* ← 카드 전체 높이 고정 */
+  cursor:pointer;
+  border-radius:12px;
+  padding:10px;
+  background:linear-gradient(160deg,rgba(255,255,255,.05),rgba(255,255,255,.02));
+  border:1px solid rgba(0,229,255,.15);
+  transition: transform .06s ease, box-shadow .2s ease, border .2s ease;
+}
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow:0 12px 22px rgba(0,229,255,.16);
+  border:1px solid rgba(0,229,255,.35);
+}
+
+/* 썸네일: 고정 높이 */
+.card img {
+  width:100%;
+  height:170px;       /* ← 썸네일 높이 고정 */
+  object-fit:cover;
+  border-radius:10px;
+}
+
+/* 텍스트 컨테이너 */
+.card .textwrap {
+  display:flex;
+  flex-direction:column;
+  margin-top:8px;
+  min-height: 78px;   /* 제목+메타 영역 고정 (44 + 20 + 마진) */
+}
+
+/* 제목/메타 - 줄수 제한(클램프) */
+.card .title {
+  font-weight:700;
+  color:#eaf7ff;
+  display:-webkit-box;
+  -webkit-line-clamp:2;       /* 2줄 고정 */
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  min-height: 44px;           /* 2줄 높이 확보 */
+  line-height: 1.2em;
+}
+.card .meta {
+  font-size:.88rem;
+  color:#9dd5ff;
+  margin-top:4px;
+  display:-webkit-box;
+  -webkit-line-clamp:1;       /* 1줄 고정 */
+  -webkit-box-orient:vertical;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  min-height: 20px;           /* 1줄 높이 확보 */
+}
+
+/* 버튼을 항상 바닥에 붙이기 */
+.card .btnwrap {
+  margin-top:auto;            /* 남은 공간을 위로 밀고 버튼은 바닥 고정 */
+}
+
+/* 섹션 여백 */
+.section { padding:14px 16px; }
+
+/* 배지 */
+.badge {
+  display:inline-block;
+  font-size:.8rem;
+  padding:4px 8px;
+  border-radius:999px;
+  border:1px solid rgba(0,229,255,.35);
+  color:#a6f6ff;
+  background:rgba(0,229,255,.06);
+}
+</style>
+"""
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+# ------------------------------------------------
+# 유틸: ISO8601 PT#H#M#S -> mm:ss / hh:mm:ss
+# ------------------------------------------------
+def parse_iso8601_duration(iso: str) -> str:
+    h = re.search(r"(\d+)H", iso or "")
+    m = re.search(r"(\d+)M", iso or "")
+    s = re.search(r"(\d+)S", iso or "")
+    hh = int(h.group(1)) if h else 0
+    mm = int(m.group(1)) if m else 0
+    ss = int(s.group(1)) if s else 0
+    total = hh*3600 + mm*60 + ss
+    if total == 0: return "LIVE/SHORT"
+    return f"{hh:d}:{mm:02d}:{ss:02d}" if hh else f"{mm:d}:{ss:02d}"
+
+# ------------------------------------------------
+# YouTube API
+# ------------------------------------------------
+YOUTUBE_API_KEY = st.secrets.get("YOUTUBE_API_KEY", None)
+SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
+VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
+
+@cache_data(show_spinner=False)
+def yt_api_search(query: str, order: str = "viewCount", max_results: int = 50, page_token: Optional[str] = None):
+    """
+    order: date | rating | relevance | title | videoCount | viewCount
+    기본값 'viewCount' (조회수 많은 순)
+    """
+    params = {
+        "part": "snippet",
+        "q": query,
+        "type": "video",
+        "maxResults": min(max_results, 50),
+        "order": order,
+        "videoEmbeddable": "true",
+        "safeSearch": "none",
+        "regionCode": "KR",
+        "relevanceLanguage": "ko",
+        "key": YOUTUBE_API_KEY,
+    }
+    if page_token:
+        params["pageToken"] = page_token
+
+    r = requests.get(SEARCH_URL, params=params, timeout=15)
+    r.raise_for_status()
+    data = r.json()
+    items = data.get("items", [])
+    next_token = data.get("nextPageToken")
+
+    ids = [it.get("id", {}).get("videoId") for it in items if it.get("id", {}).get("videoId")]
+    durations = {}
+    if ids:
+        params2 = {
+            "part": "contentDetails",
+            "id": ",".join(ids),
+            "key": YOUTUBE_API_KEY,
+            "maxResults": 50
+        }
+        rv = requests.get(VIDEOS_URL, params=params2, timeout=15)
+        rv.raise_for_status()
+        dv = rv.json()
+        for v in dv.get("items", []):
+            vid = v["id"]
+            durations[vid] = parse_iso8601_duration(v.get("contentDetails", {}).get("duration", "PT0S"))
+
+    results: List[Dict] = []
+    for it in items:
+        vid = it["id"]["videoId"]
+        sn = it.get("snippet", {})
+        thumbs = sn.get("thumbnails", {})
+        thumb = thumbs.get("medium") or thumbs.get("high") or thumbs.get("default") or {}
+        results.append({
+            "video_id": vid,
+            "title": sn.get("title", ""),
+            "channel": sn.get("channelTitle", ""),
+            "thumbnail": thumb.get("url", f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg"),
+            "duration": durations.get(vid, "LIVE/SHORT")
+        })
+    return results, next_token
+
+# ------------------------------------------------
+# 스크래핑(대체): 정규식 제거, 중괄호 밸런싱으로 ytInitialData 파싱
+# ------------------------------------------------
+COMMON_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36",
+    "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Cookie": "CONSENT=PENDING+999;"
+}
+
+def _extract_json_after_marker(html: str, marker: str) -> Optional[str]:
+    start = html.find(marker)
+    if start == -1:
+        return None
+    brace_start = html.find("{", start)
+    if brace_start == -1:
+        return None
+    depth = 0
+    i = brace_start
+    while i < len(html):
+        ch = html[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return html[brace_start:i+1]
+        i += 1
+    return None
+
+@cache_data(show_spinner=False)
+def scrape_youtube_search(query: str, max_items: int = 50) -> Tuple[List[Dict], Optional[int], Optional[int], Optional[str]]:
+    q = urllib.parse.quote(query)
+    url = f"https://www.youtube.com/results?search_query={q}&hl=ko&gl=KR"
+    try:
+        r = requests.get(url, headers=COMMON_HEADERS, timeout=15)
+        status = r.status_code
+        html = r.text
+
+        raw_json = _extract_json_after_marker(html, "ytInitialData")
+        if not raw_json:
+            raw_json = _extract_json_after_marker(html, "var ytInitialData =")
+        if not raw_json:
+            return [], status, len(html), "ytInitialData JSON 블롭을 찾지 못했습니다."
+
+        try:
+            data = json.loads(raw_json)
+        except Exception:
+            data = json.loads(raw_json.strip().rstrip(";"))
+
+        def walk(obj):
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if k == "videoRenderer":
+                        yield v
+                    else:
+                        yield from walk(v)
+            elif isinstance(obj, list):
+                for v in obj:
+                    yield from walk(v)
+
+        results: List[Dict] = []
+        for vr in walk(data):
+            vid = vr.get("videoId")
+            title_runs = (((vr.get("title") or {}).get("runs")) or [{"text": ""}])
+            title = title_runs[0].get("text", "")
+            owner_runs = (((vr.get("ownerText") or {}).get("runs")) or [{"text": ""}])
+            channel = owner_runs[0].get("text", "")
+            length = ((vr.get("lengthText") or {}).get("simpleText")) or "LIVE/SHORT"
+            if vid and title:
+                results.append({
+                    "video_id": vid,
+                    "title": title,
+                    "channel": channel,
+                    "thumbnail": f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg",
+                    "duration": length
+                })
+            if len(results) >= max_items:
+                break
+
+        return results, status, len(html), None
+    except Exception as e:
+        return [], None, None, str(e)
+
+# ------------------------------------------------
+# 중복 제거 유틸 (video_id 기준)
+# ------------------------------------------------
+def dedupe_by_video_id(items: List[Dict]) -> List[Dict]:
+    seen = set()
+    out = []
+    for it in items:
+        vid = it.get("video_id")
+        if not vid or vid in seen:
+            continue
+        seen.add(vid)
+        out.append(it)
+    return out
+
+# ------------------------------------------------
+# 세션 상태 초기화
+# ------------------------------------------------
+ss = st.session_state
+ss.setdefault("selected_video_id", "LK0sKS6l2V4")  # 초기 기본 영상
+ss.setdefault("last_query", "")
+ss.setdefault("results", [])
+ss.setdefault("next_token", None)
+ss.setdefault("use_scraping", False)
+ss.setdefault("current_order", "viewCount")  # 기본값: 조회수 많은 순
+
+# ------------------------------------------------
+# 사이드바: 진단 배지(원하면 숨김 가능)
+# ------------------------------------------------
+if SHOW_DIAGNOSTIC_BADGES:
+    st.sidebar.write(f"🔖 App Version: `{VERSION}`")
+    st.sidebar.write(f"📄 Running file: `{__file__}`")
+    sha = os.environ.get("STREAMLIT_COMMIT_HASH") or os.environ.get("GITHUB_SHA")
+    if sha:
+        st.sidebar.write(f"🔗 Commit: `{sha[:8]}`")
+
+api_key_present = bool(YOUTUBE_API_KEY)
+st.sidebar.write("🔐 YOUTUBE_API_KEY:", "✅ 감지" if api_key_present else "❌ 없음")
+st.sidebar.write("🧭 모드:", "API" if api_key_present else "SCRAPING (임시)")
+
+with st.sidebar.expander("🛠 캐시/세션 초기화"):
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🧹 cache_data 지우기"):
+            try:
+                st.cache_data.clear()
+            except Exception:
+                try:
+                    st.experimental_memo.clear()
+                    st.experimental_singleton.clear()
+                except Exception:
+                    pass
+            st.success("cache_data cleared")
+    with c2:
+        if st.button("🔄 앱 재실행"):
+            st.rerun()
+    if st.button("🧼 세션 상태 초기화"):
+        for k in ["results", "next_token", "last_query"]:
+            st.session_state.pop(k, None)
+        st.success("세션 상태 초기화 완료")
+        st.rerun()
+
+# ------------------------------------------------
+# 상단 타이틀
+# ------------------------------------------------
+st.title("🎵 INhee Hi‑Fi Music Search")
+
+# ------------------------------------------------
+# 사이드바: 검색 조건(OK 누를 때만 실행)
+# ------------------------------------------------
+with st.sidebar:
+    st.header("🔎 검색 설정")
+
+    # 요구사항에 맞춘 옵션
+    genre = st.selectbox("장르 선택", ["(선택 없음)", "국내가요", "팝송", "섹소폰", "클래식"], index=0)
+    instrument = st.selectbox("악기 선택", ["(선택 없음)", "섹소폰", "드럼", "기타", "베이스"], index=0)
+    direct = st.text_input("직접 입력", placeholder="예: 재즈 발라드, Beatles")
+
+    # 정렬 옵션 (기본: 조회수 순)
+    order_map = {
+        "조회수 많은 순": "viewCount",
+        "관련도 순": "relevance",
+        "업로드 날짜 순": "date",
+        "평점 순": "rating",
+    }
+    order_label = st.selectbox("정렬 기준", list(order_map.keys()), index=0)
+    ss.current_order = order_map[order_label]
+
+    st.markdown("---")
+    grid_cols = st.slider("한 줄 카드 수", 2, 6, 4)
+    batch = st.slider("한 번에 불러올 개수", 12, 60, 24, step=4)
+
+    st.markdown("---")
+    if not api_key_present:
+        st.info("🔐 API 키 미설정: **스크래핑 모드(비권장)** 로 시도합니다.")
+        ss.use_scraping = True
+    else:
+        ss.use_scraping = False
+        st.caption("✅ YouTube Data API v3 사용 중")
+
+    do_search = st.button("✅ OK (검색 실행)")
+
+# ------------------------------------------------
+# 상단 플레이어
+# ------------------------------------------------
+st.markdown('<div class="section glass">', unsafe_allow_html=True)
+st.subheader("📺 지금 바로 감상하세요")
+st.markdown('<div class="video-frame">', unsafe_allow_html=True)
+st.video(f"https://www.youtube.com/watch?v={ss.selected_video_id}")
+st.markdown("</div>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ------------------------------------------------
+# 검색 함수
+# ------------------------------------------------
+def build_query(g: str, i: str, q: str) -> str:
+    parts = []
+    if g and g != "(선택 없음)": parts.append(g)
+    if i and i != "(선택 없음)": parts.append(i)
+    if q and q.strip(): parts.append(q.strip())
+    return " ".join(parts).strip()
+
+def run_search(query: str, batch_size: int):
+    ss.results = []
+    ss.next_token = None
+    ss.last_query = query
+    with st.spinner(f"‘{query}’ 검색 중…"):
+        if ss.use_scraping:
+            results, http_status, html_len, err = scrape_youtube_search(query, max_items=batch_size)
+            if err:
+                st.error(f"스크래핑 실패(임시 모드): {err} / HTTP: {http_status} / HTML: {html_len}")
+            ss.results.extend(results)
+            ss.results = dedupe_by_video_id(ss.results)
+            ss.next_token = None  # 스크래핑은 더 보기 불가
+        else:
+            # API 모드 (정렬: ss.current_order)
+            try:
+                results, nextt = yt_api_search(query, order=ss.current_order, max_results=batch_size, page_token=None)
+                ss.results.extend(results)
+                ss.results = dedupe_by_video_id(ss.results)
+                ss.next_token = nextt
+            except requests.HTTPError as e:
+                try:
+                    msg = e.response.json()
+                except Exception:
+                    msg = {"error": str(e)}
+                st.error(f"API 호출 실패: {msg}")
+
+if do_search:
+    q = build_query(genre, instrument, direct)
+    if not q:
+        st.warning("검색어를 입력하거나 장르/악기를 선택한 뒤 **OK**를 눌러주세요.")
+    else:
+        run_search(q, batch)
+
+# ------------------------------------------------
+# 결과 출력: 썸네일 그리드 + 더 보기(무한, API 모드)
+# ------------------------------------------------
+st.markdown('<div class="section glass">', unsafe_allow_html=True)
+st.subheader("🎼 검색 결과")
+
+if ss.last_query and not ss.results:
+    st.warning("검색 결과가 없어요. 다른 키워드로 시도해 보세요.")
+elif ss.results:
+    # 렌더 직전 한 번 더 중복 제거(안전)
+    ss.results = dedupe_by_video_id(ss.results)
+
+    st.caption(f"🔎 ‘{ss.last_query}’ — 현재 {len(ss.results)}개 로드됨 · 정렬: {order_label}")
+    cols = st.columns(grid_cols)
+    for i, item in enumerate(ss.results):
+        with cols[i % grid_cols]:
+            # 카드 고정 높이 레이아웃
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.image(item["thumbnail"], use_container_width=True)
+            st.markdown('<div class="textwrap">', unsafe_allow_html=True)
+            st.markdown(f'<div class="title">{item["title"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="meta">{item["channel"]} · {item["duration"]}</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)  # textwrap
+            st.markdown('<div class="btnwrap">', unsafe_allow_html=True)
+            # 🔑 key를 고유하게: video_id + 인덱스(중복 방지)
+            if st.button("▶ 재생", key=f"play_{item['video_id']}_{i}", use_container_width=True):
+                ss.selected_video_id = item["video_id"]
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)  # btnwrap
+            st.markdown('</div>', unsafe_allow_html=True)  # card
+
+    # 더 보기(썸네일 제한 없음) — API 모드에서 무한 로딩
+    if ss.next_token and not ss.use_scraping:
+        if st.button("＋ 더 보기", key=f"more_{len(ss.results)}_{ss.next_token or 'end'}", use_container_width=True):
+            with st.spinner("추가 로딩 중…"):
+                new, new_token = yt_api_search(ss.last_query, order=ss.current_order, max_results=batch, page_token=ss.next_token)
                 # 새 결과 먼저 중복 제거
                 new = dedupe_by_video_id(new)
                 # 확장 후에도 다시 한 번 중복 제거
